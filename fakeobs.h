@@ -6,6 +6,20 @@
 #ifndef FAKEOBS_H_
 #define FAKEOBS_H_
 
+
+/* This indirect using of extern "C" { ... } makes Emacs happy */
+#ifndef BEGIN_C_DECLS
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
+
+BEGIN_C_DECLS
+
 /*
  * This module is only for debugging. You should not use this
  * in release version of your program. The best usage is to make a symbolic
@@ -141,5 +155,7 @@ extern int fake_alignment_mask;
 
 #define obstack_alignment_mask(stack)   (fake_alignment_mask)
 #define obstack_chunk_size(stack)       (1)
+
+END_C_DECLS
 
 #endif /* FAKEOBS_H_ */

@@ -18,16 +18,18 @@
 # define obstack_chunk_free      free
 #endif
 
-/* This indirect writing of extern "C" { ... } makes XEmacs happy */
+/* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
-# define BEGIN_C_DECLS   extern "C" {
-# define END_C_DECLS      }
-#endif  /* BEGIN_C_DECLS */
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
 
-#ifdef __cplusplus
 BEGIN_C_DECLS
-#endif
-
 
 /*
  * We encapsulated GNU obstack to provide better interface,
@@ -402,10 +404,6 @@ os_slist_find_last(os_slist_man_t *manager,
   return ptr2;
 }
 
-
-#ifdef __cplusplus
 END_C_DECLS
-#endif
 
 #endif  /* OBSUTIL_H_ */
-

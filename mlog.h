@@ -16,14 +16,16 @@
 
 /* This indirect writing of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
-# define BEGIN_C_DECLS  extern "C" {
-# define END_C_DECLS    }
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS  extern "C" {
+#  define END_C_DECLS    }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
 #endif  /* BEGIN_C_DECLS */
 
-#ifdef __cplusplus
 BEGIN_C_DECLS
-#endif
-
 
 #define MLOG_BUFFER_MAX 4096
 
@@ -42,9 +44,6 @@ extern void mlog(const char *format, ...);
 
 #define MLOG(expr, ...)         do { if (expr) mlog(__VA_ARGS__); } while (0)
 
-
-#ifdef __cplusplus
 END_C_DECLS
-#endif
 
 #endif /* MLOG_H_ */

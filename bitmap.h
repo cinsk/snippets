@@ -13,15 +13,18 @@
 
 #include <limits.h>
 
-/* This indirect writing of extern "C" { ... } makes Emacs happy */
+/* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
-# define BEGIN_C_DECLS  extern "C" {
-# define END_C_DECLS    }
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
 #endif /* BEGIN_C_DECLS */
 
-#ifdef __cplusplus
 BEGIN_C_DECLS
-#endif
 
 #ifndef INT_BIT
 # define INT_BIT        (sizeof(int) * CHAR_BIT)
@@ -90,8 +93,6 @@ bitmap_clear_all(bitmap_t *bitmap)
 
 #undef INT_BIT
 
-#ifdef __cplusplus
 END_C_DECLS
-#endif
 
 #endif /* BITMAP_H_ */

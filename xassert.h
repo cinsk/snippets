@@ -14,14 +14,16 @@
 
 /* This indirect writing of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
-# define BEGIN_C_DECLS  extern "C" {
-# define END_C_DECLS    }
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS  extern "C" {
+#  define END_C_DECLS    }
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
 #endif /* BEGIN_C_DECLS */
 
-#ifdef __cplusplus
 BEGIN_C_DECLS
-#endif
-
 
 #ifndef NDEBUG
 extern void assert_(const char *file, long line, const char *func,
@@ -36,9 +38,6 @@ extern void assert_(const char *file, long line, const char *func,
 # define xassert(condition, ...)  ((void)0)
 #endif /* NDEBUG */
 
-
-#ifdef __cplusplus
 END_C_DECLS
-#endif
 
 #endif /* XASSERT_H_ */

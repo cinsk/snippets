@@ -1,4 +1,10 @@
 /* $Id$ */
+
+/*
+ * Enhanced assert(3)
+ * Copyright (C) 2003, 2004  Seong-Kook Shin <cinsk.shin@samsung.com>
+ */
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>

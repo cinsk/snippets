@@ -40,6 +40,11 @@ extern bitmap_t *bitmap_new(size_t nbits);
 extern void bitmap_delete(bitmap_t *bitmap);
 extern int bitmap_get_size(bitmap_t *bitmap);
 extern bitmap_t *bitmap_set_size(bitmap_t *bitmap, size_t nbits);
+extern void bitmap_or(bitmap_t *dst, const bitmap_t *src);
+extern void bitmap_xor(bitmap_t *dst, const bitmap_t *src);
+extern void bitmap_and(bitmap_t *dst, const bitmap_t *src);
+extern void bitmap_not(bitmap_t *bitmap);
+extern bitmap_t *bitmap_copy(bitmap_t *src);
 
 
 static __inline__ int

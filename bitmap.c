@@ -32,6 +32,13 @@ bitmap_new(size_t nbits)
 }
 
 
+bitmap_t *
+bitmap_new_with_data(size_t nbits, void *src, size_t len)
+{
+
+}
+
+
 void
 bitmap_delete(bitmap_t *bitmap)
 {
@@ -72,6 +79,66 @@ bitmap_set_size(bitmap_t *bitmap, size_t nbits)
     bitmap->num_bits = nbits;
 
   return bitmap;
+}
+
+
+void
+bitmap_or(bitmap_t *dst, const bitmap_t *src)
+{
+  int i;
+  if (dst->num_bits != src->num_bits)
+    return;
+
+  for (i = 0; i < dst->size; i++)
+    dst->block[i] |= src->block[i];
+}
+
+
+void
+bitmap_xor(bitmap_t *dst, const bitmap_t *src)
+{
+  int i;
+  if (dst->num_bits != src->num_bits)
+    return;
+
+  for (i = 0; i < dst->size; i++)
+    dst->block[i] ^= src->block[i];
+}
+
+
+void
+bitmap_and(bitmap_t *dst, const bitmap_t *src)
+{
+  int i;
+  if (dst->num_bits != src->num_bits)
+    return;
+
+  for (i = 0; i < dst->size; i++)
+    dst->block[i] &= src->block[i];
+}
+
+
+void
+bitmap_not(bitmap_t *bitmap)
+{
+  int i;
+  for (i = 0; i < bitmap->size; i++)
+    bitmap->block[i] = ~bitmap->block[i];
+}
+
+
+bitmap *
+bitmap_copy(bitmap_t *src)
+{
+  int i;
+  bitmap_t *bm = bitmap_new(src->num_bits);
+  if (!bm)
+    return 0;
+
+  for (i = 0; i < src->size; i++)
+    bm->block[i] = src->block[i];
+
+  return bm;
 }
 
 

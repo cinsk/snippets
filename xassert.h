@@ -26,14 +26,14 @@ BEGIN_C_DECLS
 #ifndef NDEBUG
 extern void assert_(const char *file, long line, const char *func,
                     const char *expr, const char *format, ...);
-# define ASSERT(condition, ...) do {                                          \
-                                  if (!(condition))                           \
-                                    assert_(__FILE__, __LINE__, __func__,     \
-                                            #condition, __VA_ARGS__);         \
-                                } while (0)
+# define xassert(condition, ...)  do {                                        \
+                                    if (!(condition))                         \
+                                      assert_(__FILE__, __LINE__, __func__,   \
+                                              #condition, __VA_ARGS__);       \
+                                  } while (0)
 
 #else
-# define ASSERT(condition, ...) ((void)0)
+# define xassert(condition, ...)  ((void)0)
 #endif /* NDEBUG */
 
 

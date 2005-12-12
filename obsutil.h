@@ -1,8 +1,22 @@
 /* $Id$ */
-/*
- * GNU obstack wrapper with some utilities
+/* GNU obstack wrapper with some utilities
  * Copyright (C) 2003, 2004  Seong-Kook Shin <cinsky@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the Free
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+
 #ifndef OBSUTIL_H_
 #define OBSUTIL_H_
 
@@ -10,7 +24,9 @@
 # include <config.h>
 #endif
 
-#include <obstack.h>
+#include <assert.h>
+
+#include "obstack.h"
 
 #ifndef obstack_chunk_alloc
 # include <stdlib.h>
@@ -18,18 +34,18 @@
 # define obstack_chunk_free      free
 #endif
 
-/* This indirect using of extern "C" { ... } makes Emacs happy */
+/* This indirect writing of extern "C" { ... } makes XEmacs happy */
 #ifndef BEGIN_C_DECLS
-# ifdef __cplusplus
-#  define BEGIN_C_DECLS extern "C" {
-#  define END_C_DECLS   }
-# else
-#  define BEGIN_C_DECLS
-#  define END_C_DECLS
-# endif
-#endif /* BEGIN_C_DECLS */
+# define BEGIN_C_DECLS   extern "C" {
+# define END_C_DECLS      }
+#endif  /* BEGIN_C_DECLS */
 
+#ifdef __cplusplus
 BEGIN_C_DECLS
+#endif
+
+
+#define ZAP_PARAM_WARN(x)       ((void)x)
 
 /*
  * We encapsulated GNU obstack to provide better interface,
@@ -54,6 +70,15 @@ BEGIN_C_DECLS
  *
  * All obsutils wrapper which returns some pointer type returns NULL on
  * failure.
+ *
+ * Documentation of OBSTACK_*() are not included here.
+ * You should read info(1) document of glibc.
+ * For example, on my RedHat Fedore Core 2, the document can be accessible
+ * by issuing command:
+ *   $ info libc memory "memory alloc" obstack
+ *
+ * As I said before, the return type of each OBSTACK_*() are slightly
+ * different from original obstack_*().  You should read the codes here.
  */
 
 extern int obstack_errno_;
@@ -76,6 +101,17 @@ extern obstack_alloc_failed_handler_t obsutil_init(void);
 #define OBS_ERROR_CLEAR         do { obstack_errno_ = 0; } while (0)
 #define OBS_ERROR_SET           do { obstack_errno_ = 1; } while (0)
 #define OBS_ERROR               (obstack_errno_ != 0)
+
+
+/*
+ * OBSTACK_ERROR() is provided for the backward compatibility.
+ * Developers must not use this function in new code.
+ */
+static __inline__ int
+OBSTACK_ERROR(void)
+{
+  return (obstack_errno_ != 0);
+}
 
 
 static __inline__ int
@@ -112,7 +148,7 @@ OBSTACK_ALLOC(struct obstack *stack, int size)
 
 
 static __inline__ void *
-OBSTACK_COPY(struct obstack *stack, void *address, int size)
+OBSTACK_COPY(struct obstack *stack, const void *address, int size)
 {
   void *ptr;
   OBS_ERROR_CLEAR;
@@ -187,7 +223,7 @@ OBSTACK_1GROW(struct obstack *stack, char c)
 
 
 static __inline__ int
-OBSTACK_PTR_GROW(struct obstack *stack, void *data)
+OBSTACK_PTR_GROW(struct obstack *stack, const void *data)
 {
   OBS_ERROR_CLEAR;
   obstack_ptr_grow(stack, data);
@@ -278,132 +314,14 @@ OBSTACK_CHUNK_SIZE(struct obstack *stack)
 }
 
 
-struct os_slist_ {
-  void *data;
-  struct os_slist_ *next;
-};
-typedef struct os_slist_ os_slist_t;
+#ifndef NDEBUG
+void OBSTACK_DUMP(struct obstack *stack);
+int OBSTACK_BELONG(struct obstack *stack, void *ptr, size_t size);
+#endif  /* NDEBUG */
 
-#define OS_SLIST_DATA(list)     ((list)->data)
-#define OS_SLIST_NEXT(list)     ((list)->next)
-
-struct os_slist_man_ {
-  os_slist_t *grave;
-  struct obstack *stack;        /* backward reference */
-
-  int num_zombies;
-  int num_nodes;
-};
-typedef struct os_slist_man_ os_slist_man_t;
-
-
-extern os_slist_man_t *os_slist_init(struct obstack *stack);
-extern os_slist_t *os_slist_node_new(os_slist_man_t *manager, void *data);
-extern os_slist_t *os_slist_new_v(os_slist_man_t *manager, int nelem, ...);
-
-
-static __inline__ void *
-os_slist_node_delete_(os_slist_man_t *manager, os_slist_t *node)
-{
-  void *ret = node->data;
-
-  node->next = manager->grave;
-  manager->grave = node;
-  manager->num_zombies++;
-  return ret;
-}
-
-
-static __inline__ void
-os_slist_delete(os_slist_man_t *manager, os_slist_t *list)
-{
-  os_slist_t *ptr = list;
-
-  while (ptr) {
-    os_slist_t *tmp = ptr->next;
-    os_slist_node_delete_(manager, ptr);
-    ptr = tmp;
-  }
-}
-
-
-static __inline__ os_slist_t *
-os_slist_append(os_slist_man_t *manager, os_slist_t *dest, os_slist_t *src)
-{
-  os_slist_t *last, *tmp;
-
-  for (tmp = dest; tmp != NULL; tmp = tmp->next)
-    last = tmp;
-
-  last->next = src;
-  return dest;
-}
-
-
-static __inline__ os_slist_t *
-os_slist_prepend(os_slist_man_t *manager, os_slist_t *dest, os_slist_t *src)
-{
-  os_slist_t *last, *tmp;
-
-  for (tmp = src; tmp != NULL; tmp = tmp->next)
-    last = tmp;
-
-  last->next = dest;
-  return src;
-}
-
-
-static __inline__ os_slist_t *
-os_slist_next(os_slist_man_t *manager, os_slist_t *list)
-{
-  return list->next;
-}
-
-
-static __inline__ os_slist_t *
-os_slist_find_first(os_slist_man_t *manager,
-                    os_slist_t *list, void *data)
-{
-  os_slist_t *ptr;
-  for (ptr = list; ptr != NULL; ptr = ptr->next)
-    if (ptr->data == data)
-      return ptr;
-  return 0;
-}
-
-
-static __inline__ os_slist_t *
-os_slist_find_nth(os_slist_man_t *manager,
-                  os_slist_t *list, void *data, int nth)
-{
-  os_slist_t *ptr;
-  int match = 0;
-
-  for (ptr = list; ptr != 0; ptr = ptr->next) {
-    if (ptr->data == data) {
-      if (match == nth)
-        return ptr;
-      match++;
-    }
-  }
-  return 0;
-}
-
-
-static __inline__ os_slist_t *
-os_slist_find_last(os_slist_man_t *manager,
-                   os_slist_t *list, void *data)
-{
-  os_slist_t *ptr, *ptr2 = 0;
-
-  for (ptr = list; ptr != NULL; ptr = ptr->next) {
-    if (ptr->data == data) {
-      ptr2 = ptr;
-    }
-  }
-  return ptr2;
-}
-
+#ifdef __cplusplus
 END_C_DECLS
+#endif
 
 #endif  /* OBSUTIL_H_ */
+

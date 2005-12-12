@@ -1,23 +1,31 @@
 /* $Id$ */
-/*
- * GNU obstack wrapper with some utilities
+/* GNU obstack wrapper with some utilities
  * Copyright (C) 2003, 2004  Seong-Kook Shin <cinsky@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Library General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Library General Public License for more details.
+ *
+ * You should have received a copy of the GNU Library General Public
+ * License along with this library; if not, write to the Free
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
-#include <assert.h>
-#include <stdarg.h>
 
 #include <obsutil.h>
 
-
-int obstack_errno_ = 0;
-
+int obstack_errno_;
 
 void
 obsutil_alloc_failed_handler(void)
 {
   obstack_errno_ = 1;
 }
-
 
 obstack_alloc_failed_handler_t
 obsutil_init(void)
@@ -28,103 +36,69 @@ obsutil_init(void)
 }
 
 
-os_slist_man_t *
-os_slist_init(struct obstack *stack)
+#ifndef NDEBUG
+#include <stdio.h>
+/*
+ * These two functions are provided for debugging obstack.
+ * You can call these functions inside GDB using 'print' command.
+ */
+void
+obstack_dump(struct obstack *stack)
 {
-  os_slist_man_t *manager;
-  assert(OBSTACK_OBJECT_SIZE(stack) == 0);
+  struct _obstack_chunk *chunk;
+  int i = 0;
 
-  manager = OBSTACK_ALLOC(stack, sizeof(*manager));
-  if (obstack_errno_)
-    return 0;
-  manager->grave = 0;
-  manager->stack = stack;
+  printf("== obstack dump--\n");
+  printf("== obstack 0x%08x\n", (unsigned)stack);
+  printf("==   chunk_size: %ld\n", stack->chunk_size);
+  printf("==   chunk:          [0x%08x]\n", (unsigned)stack->chunk);
+  printf("==   next_free:      [0x%08x]\n", (unsigned)stack->next_free);
+  printf("==   chunk_limit:    [0x%08x]\n", (unsigned)stack->chunk_limit);
+  printf("==   temp: %ld\n", (unsigned long)stack->temp);
+  printf("==   alignment_mask: 0x%lx\n", stack->alignment_mask);
+  printf("==   use_extra_arg:      %u\n", stack->use_extra_arg);
+  printf("==   maybe_empty_object: %u\n", stack->maybe_empty_object);
+  printf("==   alloc_failed:       %u\n", stack->alloc_failed);
 
-  manager->num_zombies = 0;
-  manager->num_nodes = 0;
+  chunk = stack->chunk;
+  while (chunk) {
+    i++;
+    printf("==\n");
+    printf("==   %dnd chunk: [0x%08x]\n", i, (unsigned)chunk);
+    printf("==                     prev: [0x%08x]\n", (unsigned)chunk->prev);
+    printf("==                    limit: [0x%08x]\n", (unsigned)chunk->limit);
+    printf("==        size(limit-chunk): %ld\n",
+           (unsigned long)((unsigned char *)chunk->limit -
+                           (unsigned char *)chunk));
 
-  return manager;
+    chunk = chunk->prev;
+  }
 }
 
-
-os_slist_t *
-os_slist_node_new(os_slist_man_t *manager, void *data)
-{
-  os_slist_t *node;
-  assert(OBSTACK_OBJECT_SIZE(manager->stack) == 0);
-
-  if (manager->grave) {
-    node = manager->grave;
-    manager->grave = node->next;
-    manager->num_zombies--;
-  }
-  else {
-    node = OBSTACK_ALLOC(manager->stack, sizeof(*node));
-    if (obstack_errno_)
-      return 0;
-    manager->num_nodes++;
-  }
-  node->next = 0;
-  node->data = data;
-
-  return node;
-}
-
-
-os_slist_t *
-os_slist_new_v(os_slist_man_t *manager, int nelem, ...)
-{
-  va_list argptr;
-  int i;
-  os_slist_t *list = 0, *last, *ptr;
-
-  if (nelem < 1)
-    return 0;
-
-  va_start(argptr, nelem);
-  list = os_slist_node_new(manager, va_arg(argptr, void *));
-  last = list;
-
-  for (i = 1; i < nelem; i++) {
-    ptr = os_slist_node_new(manager, va_arg(argptr, void *));
-    if (!ptr) {
-      os_slist_delete(manager, list);
-      va_end(argptr);
-      return 0;
-    }
-    last->next = ptr;
-    last = ptr;
-  }
-
-  va_end(argptr);
-  return list;
-}
-
-
-#ifdef TEST_OBSUTIL
-
-#include <error.h>
 
 int
-main(void)
+obstack_belong(struct obstack *stack, void *ptr, size_t size)
 {
-  struct obstack stack_;
-  struct obstack *stack = &stack_;
-  os_slist_man_t *manager;
-  os_slist_t *list;
+  struct _obstack_chunk *chunk;
 
-  obsutil_init();
+  for (chunk = stack->chunk;
+       chunk != NULL;
+       chunk = chunk->prev) {
+    if ((unsigned char *)ptr < (unsigned char *)chunk ||
+        (unsigned char *)ptr >= (unsigned char *)(chunk->limit))
+      continue;
 
-  if (OBSTACK_INIT(stack) < 0)
-    error(1, 0, "obstack_init() failed");
-
-  manager = os_slist_init(stack);
-  if (!manager)
-    error(1, 0, "os_slist_init() failed");
-
-  list = os_slist_new_v(manager, 4, NULL, NULL, NULL, NULL);
-
-
+    if (size > 0) {
+      if ((unsigned char *)ptr + size < (unsigned char *)chunk->limit)
+        return 1;
+    }
+    return 1;
+  }
   return 0;
 }
-#endif  /* TEST_OBSUTIL */
+#endif  /* NDEBUG */
+
+
+
+
+

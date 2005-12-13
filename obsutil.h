@@ -25,6 +25,8 @@
 #endif
 
 #include <assert.h>
+#include <limits.h>
+#include <errno.h>
 
 #include "obstack.h"
 
@@ -318,6 +320,225 @@ OBSTACK_CHUNK_SIZE(struct obstack *stack)
 void OBSTACK_DUMP(struct obstack *stack);
 int OBSTACK_BELONG(struct obstack *stack, void *ptr, size_t size);
 #endif  /* NDEBUG */
+
+
+/*
+ * Store the current directory name in STACK as a growing object.
+ * Note that the growing object is finished with a null character.
+ */
+static __inline__ char *
+OBSTACK_GETCWD_GROW(struct obstack *stack)
+{
+  size_t capacity;
+  char *cwd;
+  int saved_errno = 0;
+
+  assert(stack != NULL);
+  assert(OBSTACK_OBJECT_SIZE(stack) == 0);
+
+  capacity = PATH_MAX;
+  OBSTACK_BLANK(stack, capacity);
+
+  while (1) {
+    cwd = getcwd((char *)OBSTACK_BASE(stack), OBSTACK_OBJECT_SIZE(stack));
+    if (!cwd) {
+      if (errno != ERANGE) {
+        saved_errno = errno;
+        break;
+      }
+      else {
+        OBSTACK_BLANK(stack, PATH_MAX);
+      }
+    }
+    else {
+      OBSTACK_BLANK(stack, strlen(cwd) + 1 - OBSTACK_OBJECT_SIZE(stack));
+      break;
+    }
+  }
+  if (!cwd) {
+    OBSTACK_FREE(stack, OBSTACK_FINISH(stack));
+    errno = saved_errno;
+    return 0;                   /* Unrecoverable error occurred */
+  }
+
+  return cwd;
+}
+
+
+/*
+ * Store the current directory into the given STACK.
+ *
+ * Returns a pointer to the current directory name.
+ */
+static __inline__ char *
+OBSTACK_GETCWD(struct obstack *stack)
+{
+  char *p = OBSTACK_GETCWD_GROW(stack);
+  return (p) ? (char *)OBSTACK_FINISH(stack) : 0;
+}
+
+
+/*
+ * This function make the growing object finished, and create another
+ * growing object that duplicates the previous one.
+ *
+ * It returns a pointer to the (first) finished object.
+ */
+static __inline__ void *
+OBSTACK_DUP_GROW(struct obstack *stack)
+{
+  void *p;
+  size_t size;
+
+  size = OBSTACK_OBJECT_SIZE(stack);
+  if (size == 0)
+    return 0;
+
+  p = OBSTACK_FINISH(stack);
+  if (!p)
+    return 0;
+
+  OBSTACK_GROW(stack, p, size);
+  return OBSTACK_BASE(stack);
+}
+
+
+/*
+ * Analgous to OBSTACK_DUP_GROW() except it added additional null character
+ * before finishing the growing object.  Note that the duplicated growing
+ * object will not have additional null character.
+ *
+ * \code
+ * char *p, *q;
+ * OBSTACK_GROW(stack, "asdf", 4);
+ * // At this point, STACK contains 4 bytes of data, "asdf".
+ * p = OBSTACK_DUP_GROW0(stack);
+ * // At this point, STACK have additional 4 bytes of data, "asdf".
+ * // P points the first "asdf" that is terminated with null character.
+ * q = OBSTACK_BASE(stack)
+ * // At this point, Q points the second "asdf" that isn't terminated with
+ * // a null character.
+ * \endcode
+ */
+static __inline__ void *
+OBSTACK_DUP_GROW0(struct obstack *stack)
+{
+  void *p;
+  size_t size;
+
+  size = OBSTACK_OBJECT_SIZE(stack);
+  if (size == 0)
+    return 0;
+
+  OBSTACK_1GROW(stack, '\0');
+  p = OBSTACK_FINISH(stack);
+  if (!p)
+    return 0;
+
+  OBSTACK_GROW(stack, p, size);
+  return OBSTACK_BASE(stack);
+}
+
+
+//int OBSTACK_APPEND_GROW(struct obstack *stack, void *data, size_t size);
+//int OBSTACK_APPEND_GROW0(struct obstack *stack, void *data, size_t size);
+
+static __inline__ char *
+OBSTACK_STR_COPY(struct obstack *stack, const char *s)
+{
+  return OBSTACK_COPY0(stack, s, strlen(s));
+}
+
+
+static __inline__ char *
+OBSTACK_STR_COPY2(struct obstack *stack, const char *s1, const char *s2)
+{
+  char *ret;
+  int l1 = strlen(s1);
+  int l2 = strlen(s2);
+
+  ret = OBSTACK_ALLOC(stack, l1 + l2 + 1);
+  if (!ret)
+    return 0;
+
+  strcpy(ret, s1);
+  strcpy(ret + l1, s2);
+
+  return ret;
+}
+
+
+static __inline__ char *
+OBSTACK_STR_COPY3(struct obstack *stack,
+                  const char *s1, const char *s2, const char *s3)
+{
+  char *ret;
+  int l1 = strlen(s1);
+  int l2 = strlen(s2);
+  int l3 = strlen(s3);
+
+  ret = OBSTACK_ALLOC(stack, l1 + l2 + l3 + 1);
+  if (!ret)
+    return 0;
+
+  strcpy(ret, s1);
+  strcpy(ret + l1, s2);
+  strcpy(ret + l1 + l2, s3);
+
+  return ret;
+}
+
+
+static __inline__ char *
+OBSTACK_STR_GROW(struct obstack *stack, const char *s)
+{
+  return OBSTACK_GROW0(stack, s, strlen(s));
+}
+
+
+static __inline__ char *
+OBSTACK_STR_GROW2(struct obstack *stack, const char *s1, const char *s2)
+{
+  char *base;
+  size_t size;
+  int l1 = strlen(s1);
+  int l2 = strlen(s2);
+
+  size = OBSTACK_OBJECT_SIZE(stack);
+  OBSTACK_BLANK(stack, l1 + l2 + 1);
+  if (OBSTACK_ERROR())
+    return 0;
+
+  base = (char *)OBSTACK_BASE(stack) + size;
+  strcpy(base, s1);
+  strcpy(base + l1, s2);
+
+  return base;
+}
+
+
+static __inline__ char *
+OBSTACK_STR_GROW3(struct obstack *stack,
+                  const char *s1, const char *s2, const char *s3)
+{
+  char *base;
+  size_t size;
+  int l1 = strlen(s1);
+  int l2 = strlen(s2);
+  int l3 = strlen(s3);
+
+  size = OBSTACK_OBJECT_SIZE(stack);
+  OBSTACK_BLANK(stack, l1 + l2 + l3 + 1);
+  if (OBSTACK_ERROR())
+    return 0;
+  base = (char *)OBSTACK_BASE(stack) + size;
+  strcpy(base, s1);
+  strcpy(base + l1, s2);
+  strcpy(base + l1 + l2, s3);
+
+  return base;
+}
+
 
 #ifdef __cplusplus
 END_C_DECLS

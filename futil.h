@@ -61,7 +61,7 @@ fu_islink_with_stat(const struct stat *sbuf)
 
 extern int fu_isdir(const char *pathname);
 extern char *fu_url2pathname(const char *url);
-
+extern int fu_datasync(const char *pathname);
 
 #define FU_NORECURSE    0x0001
 #define FU_NOFOLLOW     0x0002

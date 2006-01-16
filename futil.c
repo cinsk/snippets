@@ -103,6 +103,28 @@ fu_islink(const char *pathname)
 }
 
 
+int
+fu_datasync(const char *pathname)
+{
+  int fd;
+  int ret, saved_errno;
+  assert(pathname != 0);
+
+  fd = open(pathname, O_RDONLY);
+  if (fd < 0)
+    return -1;
+
+  ret = fdatasync(fd);
+  saved_errno = errno;
+  close(fd);
+
+  if (ret < 0)
+    errno = saved_errno;
+
+  return ret;
+}
+
+
 char *
 fu_url2pathname(const char *url)
 {
@@ -286,3 +308,4 @@ fu_find_files(const char *basedir, struct obstack *pool,
   }
   return 0;
 }
+

@@ -39,12 +39,13 @@ BEGIN_C_DECLS
 
 #define CF_OVERWRITE    0x0001
 #define CF_PRUNE        0x0002
+#define CF_VERBOSE      0x0004
 
 struct conf_;
 typedef struct conf_ CONF;
 
 extern CONF *conf_new(int hash_size);
-extern CONF *conf_load(CONF *cf, const char *pathname, int hash_size);
+extern int conf_load(CONF *cf, const char *pathname, int hash_size);
 
 //extern CONF *conf_open(const char *pathname, int size_hint);
 extern int conf_close(CONF *cf);

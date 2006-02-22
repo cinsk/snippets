@@ -17,9 +17,13 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 #include <assert.h>
+
+#include <ctype.h>
+
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <obstack.h>
 
 #include "conf.h"
@@ -54,6 +58,9 @@ struct conf_ {
   size_t num_entries;
   size_t num_sections;
 
+  char *cur_section;            /* reserved for parsing functions */
+  int errno;
+
   size_t table_size;
   struct confent *table[1];
 };
@@ -63,6 +70,18 @@ static size_t get_nearest_prime(size_t n, int op);
 static unsigned long string_hash(const char *s);
 
 static int parse(CONF *cf, FILE *fp);
+
+#define CFE_OK          0
+#define CFE_ERR         -1
+#define CFE_QUOTE       -2
+#define CFE_NOKEY       -3
+#define CFE_NOVALUE     -4
+
+static int get_pair(char *line, char **key, char **value);
+static char *get_quoted(char *line, char quote);
+
+static char *cur_section(CONF *cf);
+static int parse_section(CONF *cf, char *line);
 
 static struct confent *find_sect(CONF *cf, const char *sect);
 static struct confent *find_sect_create(CONF *cf, const char *sect);
@@ -83,8 +102,9 @@ static void delete_entry(CONF *cf, struct confent *ent);
 
 static void add_hash(CONF *cf, int index, struct confent *ent);
 
+static int blankline(const char *line);
 static int eol(FILE *fp, int ch);
-static char *getline(FILE *fp, int lookahead);
+static char *getline(FILE *fp, int lookahead, int *lineno);
 
 #define BOM_INVALID             (-1)
 #define BOM_NONE                0
@@ -99,6 +119,7 @@ static int eatup_chars(FILE *fp, int nchar, ...);
 static struct obstack *gl_stack;
 static struct obstack gl_stack_;
 
+#define IS_VERBOSE(cf)          ((cf)->flags & CF_VERBOSE)
 #define IS_OVERWRITE(cf)        ((cf)->flags & CF_OVERWRITE)
 #define IS_PRUNE(cf)            ((cf)->flags & CF_PRUNE)
 
@@ -125,6 +146,9 @@ conf_new(int size_hint)
   cf->num_entries = 0;
   cf->num_sections = 0;
 
+  cf->cur_section = 0;
+  cf->errno = 0;
+
   for (i = 0; i < cf->table_size; i++)
     cf->table[i] = NULL;
 
@@ -132,24 +156,40 @@ conf_new(int size_hint)
 }
 
 
-#if 0
-CONF *
+int
 conf_load(CONF *cf, const char *pathname, int size_hint)
 {
-  cf = conf_new(size_hint);
-  if (!cf)
-    return NULL;
+  FILE *fp;
+  char *p;
+  int ret;
 
-  if (parse(cf, pathname) < 0)
-    goto failed;
+  assert(cf != NULL);
 
-  return cf;
+  p = strdup(pathname);
+  if (!p)
+    return -1;
 
- failed:
-  conf_close(cf);
-  return NULL;
+  fp = fopen(pathname, "r");
+  if (!fp) {
+    free(p);
+    return -1;
+  }
+
+  ret = parse(cf, fp);
+
+  if (ret != 0) {
+    cf->errno = ret;
+    free(p);
+  }
+  else {
+    if (cf->pathname)
+      free(cf->pathname);
+    cf->pathname = p;
+  }
+
+  fclose(fp);
+  return ret;
 }
-#endif  /* 0 */
 
 
 int
@@ -217,28 +257,167 @@ conf_remove(CONF *cf, const char *sect, const char *key)
 }
 
 
-int
+static int
 parse(CONF *cf, FILE *fp)
 {
-  int ch, ret;
+  int ch, ret = -1;
+  unsigned lineno = 0;
   char *line;
+  char *key, *value;
+  int len;
 
   ch = fgetc(fp);
   if (ch == EOF)
-    err;
+    goto err;
 
   if ((ret = eatup_bom(fp, ch)) == BOM_INVALID)
-    err;
+    goto err;
 
-  line = getline(fp, (ret == BOM_NONE) ? ch : EOF);
+  line = getline(fp, (ret == BOM_NONE) ? ch : EOF, &lineno);
   if (line) {
     do {
       /* TODO: parse */
+      // printf("%u: %s\n", lineno, line);
 
-       free(line);
-    } while ((line = getline(fp, EOF)) != NULL);
+      len = strlen(line);
+      if (len == 0 || blankline(line)) /* ignore an empty or a blank line */
+        continue;
+
+      if (line[0] == '#' || line[0] == '!' || line[0] == ';')
+        /* ignore a comment line */
+        continue;
+
+      if (parse_section(cf, line) == 0)
+        continue;
+
+      ret = get_pair(line, &key, &value);
+      if (ret < 0) {
+        if (IS_VERBOSE(cf))
+          ;
+        goto err;
+        free(line);
+        return ret;
+      }
+
+      printf("[%s] %s = %s\n", cur_section(cf), key, value);
+      conf_add(cf, cur_section(cf), key, value);
+
+      free(line);
+    } while ((line = getline(fp, EOF, &lineno)) != NULL);
   }
+  return 0;
 
+ err:
+  return ret;
+}
+
+
+static char *
+cur_section(CONF *cf)
+{
+  return cf->cur_section;
+}
+
+
+static int
+parse_section(CONF *cf, char *line)
+{
+  char *p, *q;
+  size_t skipped;
+
+  p = line;
+  skipped = strspn(p, " \v\t\n\r\b");
+  p += skipped;
+
+  if (*p != '[')
+    return -1;
+
+  p++;                /* P points the beginning of the section name */
+
+  skipped = strcspn(p, "]");
+  q = p + skipped;
+  *q = '\0';
+
+  q = strdup(p);
+  if (!q)
+    return -1;
+
+  if (cf->cur_section)
+    free(cf->cur_section);
+  cf->cur_section = q;
+
+  return 0;
+}
+
+
+static int
+get_pair(char *line, char **key, char **value)
+{
+  int ret = -1;
+  char *p, *q;
+  size_t ignored, skipped;
+
+  p = line;
+
+  ignored = strspn(p, " \v\t\n\r\b");
+  if (ignored > 0)
+    p += ignored;
+
+  if (*p == '"') {
+    q = get_quoted(p + 1, *p);
+    if (!q) {
+      ret = CFE_QUOTE;
+      goto end;
+    }
+    p++;
+  }
+  else {
+    skipped = strcspn(p, " =\v\t\n\r\n");
+    if (skipped == 0) {
+      ret = CFE_NOKEY;
+      goto end;
+    }
+    *(p + skipped) = '\0';
+    q = p + skipped + 1;
+  }
+  /* Q points the next token char, P points the quoted word */
+
+  ignored = strspn(q, "= \v\t\n\r\b");
+  if (ignored > 0)
+    q += ignored;
+
+  skipped = strcspn(q, " \v\t\n\r\b");
+  if (skipped == 0) {
+    ret = CFE_NOVALUE;
+    goto end;
+  }
+  *(q + skipped) = '\0';
+
+  if (key)
+    *key = p;
+  if (value)
+    *value = q;
+  ret = 0;
+
+ end:
+  return ret;
+}
+
+
+static char *
+get_quoted(char *line, char quote)
+{
+  char *p = line;
+
+  while (*p != '\0') {
+    if (*p == '\\' && *(p + 1) == quote)
+      p++;
+    else if (*p == quote) {
+      *p = '\0';
+      return p + 1;
+    }
+    p++;
+  }
   return 0;
 }
 
@@ -415,7 +594,7 @@ find_entry(CONF *cf, const char *sect, const char *key, struct confent **prev)
       continue;
 
     if (sect && strcmp(p->sect->key, sect) == 0 && strcmp(p->key, key) == 0) {
-      if (prev)
+      if (prev && p != q)
         *prev = q;
       return p;
     }
@@ -486,10 +665,11 @@ del_entry(CONF *cf, const char *sect, const char *key)
   ent->next = 0;
 
   /* Remove from the sect sibling list */
-  for (p = prev = ent->sect; p != NULL && p != ent; p = p->sibling) {
+  for (p = prev = ent->sect->sect; p != NULL && p != ent; p = p->sibling) {
     prev = p;
   }
-  if (p == ent->sect)
+  /* TODO: Can P be NULL?  */
+  if (p == ent->sect->sect)
     ent->sect = p->sibling;
   else
     prev->sibling = p->sibling;
@@ -603,6 +783,19 @@ get_nearest_prime(size_t n, int op)
 
 
 static int
+blankline(const char *line)
+{
+  int len = strlen(line);
+  int i;
+  for (i = 0; i < len; i++) {
+    if (!isspace(line[i]))
+      return 0;
+  }
+  return 1;
+}
+
+
+static int
 eol(FILE *fp, int ch)
 {
   int lookahead = 0;
@@ -612,15 +805,13 @@ eol(FILE *fp, int ch)
     return 1;
 
   case '\n':
-    lookahead = fgetc(fp);
-    if (lookahead == EOF)
-      return 1;
-
-    if (lookahead != '\r')
-      ungetc(lookahead, fp);
     return 1;
 
   case '\r':
+    lookahead = fgetc(fp);
+    if (lookahead == EOF || lookahead == '\n')
+      return 1;
+    ungetc(lookahead, fp);
     return 1;
 
   default:
@@ -641,7 +832,7 @@ getline_finalizer(void)
  * already read one character, pass it as LOOKAHEAD. Otherwise use
  * EOF.  */
 static char *
-getline(FILE *fp, int lookahead)
+getline(FILE *fp, int lookahead, int *lineno)
 {
   int ch, look;
   char *line, *dup;
@@ -661,6 +852,7 @@ getline(FILE *fp, int lookahead)
 
   while (ch != EOF) {
     if (eol(fp, ch)) {
+      if (lineno) (*lineno)++;
       obstack_1grow(gl_stack, '\0');
       break;
     }
@@ -673,6 +865,7 @@ getline(FILE *fp, int lookahead)
       }
 
       if (eol(fp, look)) {
+        if (lineno) (*lineno)++;
         ch = fgetc(fp);
         if (ch == EOF)
           break;
@@ -789,7 +982,7 @@ conf_dump(CONF *cf, FILE *fp)
       printf("\t%s [%u]\n", p->key, (unsigned)p->value);
 
       for (q = p->sect; q != NULL; q = q->sibling)
-        printf("\t\t%s:%s\n", q->key, q->value);
+        printf("\t\t%s = %s\n", q->key, q->value);
     }
 }
 #endif  /* NDEBUG */
@@ -801,7 +994,16 @@ main(int argc, char *argv[])
 {
   CONF *cf;
   cf = conf_new(64);
+
+  if (argc == 2) {
+    conf_dump(cf, stdout);
+    if (conf_load(cf, argv[1], 32) < 0) {
+      fprintf(stderr, "conf_load() failed");
+    }
+  }
+
   conf_dump(cf, stdout);
+#if 1
   conf_add(cf, "PANEL", "SIZE","LARGE");
   conf_dump(cf, stdout);
   conf_add(cf, "PANEL", "LEFT","200");
@@ -813,7 +1015,10 @@ main(int argc, char *argv[])
 
   conf_dump(cf, stdout);
 
+  conf_remove(cf, "PANEL", "TOP");
+#endif  /* 0 */
   conf_close(cf);
+
   return 0;
 }
 #endif  /* TEST_CONF */

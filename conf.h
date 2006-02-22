@@ -55,6 +55,13 @@ extern int conf_add(CONF *cf, const char *sect,
 
 extern int conf_remove(CONF *cf, const char *sect, const char *key);
 
+typedef int (*conf_enum_proc)(const char *section,
+                              const char *key, const char *value,
+                              int index, void *data);
+
+int conf_enum_section(CONF *cf, conf_enum_proc proc, void *data);
+int conf_enum(CONF *cf, const char *section, conf_enum_proc proc, void *data);
+
 #ifndef NDEBUG
 static void conf_dump(CONF *cf, FILE *fp);
 #endif

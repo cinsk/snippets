@@ -257,6 +257,48 @@ conf_remove(CONF *cf, const char *sect, const char *key)
 }
 
 
+int
+conf_enum_section(CONF *cf, conf_enum_proc proc, void *data)
+{
+  struct confent *p;
+  int index;
+
+  for (index = 0, p = cf->sections; p != 0; p = p->sibling, index++) {
+    if (proc(p->key, 0, 0, index, data) < 0)
+      break;
+  }
+
+  return index;
+}
+
+
+int
+conf_enum(CONF *cf, const char *section, conf_enum_proc proc, void *data)
+{
+  struct confent *sect, *p;
+  int index = 0;
+
+  if (section) {
+    sect = find_sect(cf, section);
+    if (!sect)
+      return -1;
+
+    for (p = sect->sect; p != 0; p = p->sibling) {
+      if (proc(sect->key, p->key, p->value, index++, data) < 0)
+        break;
+    }
+  }
+  else {
+    for (sect = cf->sections; sect != NULL; sect = sect->sibling) {
+      for (p = sect->sect; p != NULL; p = p->sibling)
+        if (proc(sect->key, p->key, p->value, index++, data) < 0)
+          break;
+    }
+  }
+  return index;
+}
+
+
 static int
 parse(CONF *cf, FILE *fp)
 {
@@ -593,10 +635,13 @@ find_entry(CONF *cf, const char *sect, const char *key, struct confent **prev)
     if (p->type == CF_SECT)
       continue;
 
-    if (sect && strcmp(p->sect->key, sect) == 0 && strcmp(p->key, key) == 0) {
-      if (prev && p != q)
-        *prev = q;
-      return p;
+    if (sect) {
+      if (strcmp(p->sect->key, sect) == 0 && strcmp(p->key, key) == 0) {
+        if (prev && p != q)
+          *prev = q;
+        return p;
+      }
+      return NULL;
     }
     else if (strcmp(p->key, key) == 0) {
       if (prev)
@@ -990,20 +1035,36 @@ conf_dump(CONF *cf, FILE *fp)
 
 #ifdef TEST_CONF
 int
+enum_proc(const char *sect, const char *key, const char *val,
+          int index, void *data)
+{
+  printf("%d: [%s] %s = %s\n", index, sect, key, val);
+  return 0;
+}
+
+
+int
 main(int argc, char *argv[])
 {
   CONF *cf;
   cf = conf_new(64);
 
   if (argc == 2) {
-    conf_dump(cf, stdout);
+    //conf_dump(cf, stdout);
     if (conf_load(cf, argv[1], 32) < 0) {
       fprintf(stderr, "conf_load() failed");
     }
   }
-
-  conf_dump(cf, stdout);
 #if 1
+  printf("enum_section ----------------------------------------- \n");
+  conf_enum_section(cf, enum_proc, 0);
+
+  printf("enum_all -------------------------------------------- \n");
+  conf_enum(cf, 0, enum_proc, 0);
+#endif
+
+#if 0
+  conf_dump(cf, stdout);
   conf_add(cf, "PANEL", "SIZE","LARGE");
   conf_dump(cf, stdout);
   conf_add(cf, "PANEL", "LEFT","200");
@@ -1017,6 +1078,7 @@ main(int argc, char *argv[])
 
   conf_remove(cf, "PANEL", "TOP");
 #endif  /* 0 */
+  conf_dump(cf, stdout);
   conf_close(cf);
 
   return 0;

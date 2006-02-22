@@ -46,14 +46,21 @@ typedef struct conf_ CONF;
 
 extern CONF *conf_new(int hash_size);
 extern int conf_load(CONF *cf, const char *pathname, int hash_size);
+extern int conf_save(CONF *cf, const char *headers[]);
+extern int conf_save_as(CONF *cf, const char *pathname, const char *headers[]);
 
 //extern CONF *conf_open(const char *pathname, int size_hint);
 extern int conf_close(CONF *cf);
+
+extern int conf_section_count(CONF *cf);
+extern int conf_entry_count(CONF *cf);
 
 extern int conf_add(CONF *cf, const char *sect,
                     const char *key, const char *value);
 
 extern int conf_remove(CONF *cf, const char *sect, const char *key);
+
+extern void conf_set_dirty(CONF *cf, int dirty);
 
 typedef int (*conf_enum_proc)(const char *section,
                               const char *key, const char *value,

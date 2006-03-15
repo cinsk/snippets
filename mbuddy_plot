@@ -1,0 +1,59 @@
+#!/bin/sh
+
+# $Id$ 
+
+# mbuddy-plot: malloc debugging buddy ploting script
+# Copyright (C) 2006  Seong-Kook Shin <cinsky@gmail.com>
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Library General Public
+# License as published by the Free Software Foundation; either
+# version 2 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Library General Public License for more details.
+#
+# You should have received a copy of the GNU Library General Public
+# License along with this library; if not, write to the Free
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+GNUPLOT=/usr/bin/gnuplot
+TMPFILE=/tmp/mbplot.$$
+
+
+if test $# -eq 0; then
+    datafile=mb.out
+else
+    datafile="$1";
+fi
+
+
+if test ! -f "$datafile"; then
+    echo "mbplot: \`$datafile' not found" 1>&2
+    exit 1
+fi
+
+#  'mb.out' using 1:2:(0) '%lf:%lf:%lf' with lines title "Total allocated", \
+#  'mb.out' using 1:(0):3 '%lf:%lf:%lf' with lines title "rise/fall unit"
+
+start_time=`awk -F: 'NR==1 { print $1 }' mb.out`
+
+trap "rm $TMPFILE" 1 2 3 6 9 14 15
+cat >$TMPFILE <<EOF
+#set grid
+#splot \
+#  "< awk -F: '{ print NR, \$2, \$3 }' mb.out" using 1:(0):2 '%lf %lf %lf' with lines title "asdf", \
+#  'mb.out' using 1:(0):2 '%lf:%lf:%lf' with lines title "Total allocated", \
+#  'mb.out' using 1:3:(0) '%lf:%lf:%lf' with lines title "rise/fall unit"
+splot \
+  "< grep -v '^#' mb.out | awk -F: '{ print NR, \$2, \$3 }'" \
+    using 1:(0):2 '%lf %lf %lf' with lines title "Total allocated", \
+  "< grep -v '^#' mb.out | awk -F: '{ print NR, \$2, \$3 }'" \
+    using 1:3:(0) '%lf %lf %lf' with lines title "rise/fall unit"
+pause -1
+EOF
+
+$GNUPLOT $TMPFILE
+rm $TMPFILE

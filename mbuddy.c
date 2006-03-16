@@ -89,16 +89,10 @@ struct mb_head {
                             mb_alloc_peak = mb_allocated; \
                         } while (0)
 
-/*
- * MBUDDY_LIMIT="1024k"
- * MBUDDY_NLIMIT="12"
- * MBUDDY_
- */
-
-void *mb_malloc(size_t size, const void *caller);
-void *mb_realloc(void *ptr, size_t size, const void *caller);
-void mb_free(void *p, const void *caller);
-void mb_log(const char *fmt, ...);
+static void *mb_malloc(size_t size, const void *caller);
+static void *mb_realloc(void *ptr, size_t size, const void *caller);
+static void mb_free(void *p, const void *caller);
+static void mb_log(const char *fmt, ...);
 
 static const char *log_pathname = 0;
 static int call_limit = 0;
@@ -137,7 +131,7 @@ init_env(void)
   if (p)
     log_pathname = p;
   else
-    log_pathname = "mb.out";
+    log_pathname = MB_LOGNAME;
 
   p = getenv("MB_ABORT");
   if (p)
@@ -158,7 +152,7 @@ init_env(void)
 }
 
 
-void *
+static void *
 mb_malloc(size_t size, const void *caller)
 {
   void *p;
@@ -199,7 +193,7 @@ mb_malloc(size_t size, const void *caller)
 }
 
 
-void *
+static void *
 mb_realloc(void *ptr, size_t size, const void *caller)
 {
   void *p;
@@ -224,6 +218,7 @@ mb_realloc(void *ptr, size_t size, const void *caller)
       mb_allocated += size;
       SET_PEAK();
     }
+    print_trace();
     mb_log("%10zd: realloc(%p, %zu) from %p => %p", (ssize_t)size,
            ptr, size, caller, p ? p + HEADER_SIZE : 0);
 
@@ -234,6 +229,7 @@ mb_realloc(void *ptr, size_t size, const void *caller)
   }
 
   if (h->size == size) {
+    print_trace();
     mb_log("%10zd: realloc(%p, %zu) from %p => %p", (ssize_t)0,
            ptr, size, caller, p + HEADER_SIZE);
 
@@ -258,6 +254,7 @@ mb_realloc(void *ptr, size_t size, const void *caller)
     SET_PEAK();
   }
 
+  print_trace();
   mb_log("%10zd: realloc(%p, %zu) from %p => %p",
          (int)(size - oldsize), ptr, size, caller, p ? p + HEADER_SIZE : 0);
   SET_HEAD(p, size - oldsize);
@@ -269,7 +266,7 @@ mb_realloc(void *ptr, size_t size, const void *caller)
 }
 
 
-void
+static void
 mb_free(void *p, const void *caller)
 {
   struct mb_head *h = HEADER(p);
@@ -283,10 +280,13 @@ mb_free(void *p, const void *caller)
     mb_allocated -= h->size;
     oldsize = h->size;
     free(h);
+    print_trace();
     mb_log("%10zd: free(%p) from %p", -oldsize, p, caller);
   }
-  else
+  else {
+    print_trace();
     mb_log("%10zd: free(%p) from %p", (ssize_t)0, p, caller);
+  }
   SAVE_HOOK();
   UNLOCK();
 }
@@ -320,20 +320,91 @@ close_stream(void)
 }
 
 
-static FILE *
-open_stream(void)
+static const char *help_msgs[] = {
+  "",
+  " A line starting with '#' character is a comment.",
+  " The syntax of each record is",
+  "",
+  "   TIME(msec): TOTAL-SIZE: INC/DEC: MESSAGE",
+  "",
+  " 1) TIME is the time in microseconds when the MESSAGE is about to happen.",
+  " 2) TOTAL-SIZE is the accumulated size of dynamically allocated memory ",
+  "    in bytes.",
+  " 3) INC/DEC is the amount of increasement/decreasement of dynamically",
+  "    allocated memory in this moments.  The positive value means that some",
+  "    memory is allocated, and the negative value means that some memory is",
+  "    deallocated.",
+  " 4) MESSAGE tells that the description of each memory related operation.",
+  "    For example, if the program calls malloc(3), the message looks like:",
+  "",
+  "      malloc(676) from 0xb7efcdce => 0x805f018",
+  "",
+  "    This means that malloc(3) tries to allocate 676 bytes from the caller",
+  "    0xb7efcdce, and malloc(3) returns the pointer 0x805f018.",
+  "",
+  "",
+  " Users may set some of the environment varibles to control mbuddy output.",
+  "",
+  " MB_MLIMIT -- If set to nonzero integer value, allocators will be",
+  "              failed when the total amount of allocated memory is",
+  "              greater than this value.  You may use 'K', 'M', 'T'",
+  "              postfix to set the value.  (e.g. \"1024K\" means 1024",
+  "              kilobytes, \"3M\" means 3 megabytes, \"1T\" means 1",
+  "              terabytes.)",
+  "              If set to zero, memory limit is turned off.",
+  "             ",
+  " MB_CLIMIT -- If set to nonzero integer value, calling allocators",
+  "              more than MB_CLIMIT times will be failed.",
+  "              Other conditions of MB_MLIMIT are preserved.",
+  "",
+  " MB_LOGNAME - The output filename. If not set, \"mb.out\" will be ",
+  "              used by default.",
+  "",
+  " MB_ABORT --  If set to nonzero value, and if the allocators failed,",
+  "              the allocators automatically call abort(3).  Might be",
+  "              useful in gdb session.",
+  "",
+  " MB_BACKTRACE If set to nonzero value, the backtrace information preceeds",
+  "              each record.  For example, if MB_BACKTRACE is set to 10, ",
+  "              mbuddy will show 10 caller information in a comment.",
+  "              The recommended value is 10.",
+  "",
+  NULL,
+};
+
+
+void
+print_header(FILE *fp)
 {
-  FILE *fp;
   time_t tm;
   struct tm *tmptr;
-
   char buf[32];
-
-  remove(log_pathname);
+  int i;
 
   time(&tm);
   tmptr = localtime(&tm);
   strftime(buf, 32, "%c", tmptr);
+
+  fprintf(fp, "# -*-conf-*-\n");
+  fprintf(fp, "#\n");
+  fprintf(fp, "# Automatically generated by mbuddy (%s)\n", buf);
+  fprintf(fp, "#\n");
+
+  for (i = 0; help_msgs[i]; i++) {
+    fprintf(fp, "# %s\n", help_msgs[i]);
+  }
+
+  fprintf(fp, "#\n");
+  fflush(fp);
+}
+
+
+static FILE *
+open_stream(void)
+{
+  FILE *fp;
+
+  remove(log_pathname);
 
   fp = fopen(log_pathname, "a");
   if (!fp)
@@ -342,14 +413,7 @@ open_stream(void)
   setbuf(fp, NULL);
   atexit(close_stream);
 
-  fprintf(fp, "#\n");
-  fprintf(fp, "# Automatically generated by mbuddy (%s)\n", buf);
-  fprintf(fp, "#\n");
-  fprintf(fp, "# Syntax: # comments\n");
-  fprintf(fp,
-          "#         \"TIME(msec): TOTAL-SIZE: "
-          "ALLOC-INCREASE/DECREASE: MESSAGE\"\n");;
-  fprintf(fp, "#\n");
+  print_header(fp);
 
   return fp;
 }
@@ -456,7 +520,7 @@ print_trace(void)
   fprintf(mb_stream, "# Obtained %zd stack frames.\n", size);
 
   for (i = 0; i < size; i++)
-    fprintf(mb_stream, "# %d: %s\n", i, strings[i]);
+    fprintf(mb_stream, "# [BT] %d: %s\n", i, strings[i]);
 
   free (strings);
 }
@@ -464,40 +528,127 @@ print_trace(void)
 
 #ifdef TEST_MBUDDY
 
-void car()
-{
-  print_trace();
-}
+typedef void (*func_t)(int);
 
-void bar()
-{
-  car();
-}
+
+#define MAX_FUNC        4
+#define MAX_DEPTH       4
+#define MAX_SLOT        256
+
+#define ALLOC_MAX       (8 * 1024)
+
+void foo(int depth);
+void bar(int depth);
+void car(int depth);
+void cdr(int depth);
+
+func_t functions[MAX_FUNC] = { foo, bar, car, cdr, };
+int dir = 1;
+
+void *ptrs[MAX_SLOT] = { 0, };
 
 void
-foo()
+foo(int depth)
 {
-  bar();
+  int index = rand() % MAX_SLOT;
+
+  printf("foo(%d)\n", depth);
+
+  if (ptrs[index]) {
+    free(ptrs[index]);
+    ptrs[index] = 0;
+  }
+
+  ptrs[index] = malloc(rand() % ALLOC_MAX + 1);
+
+  if (depth < MAX_DEPTH && rand() % 2) {
+    (*functions[rand() % MAX_FUNC])(depth + 1);
+  }
+
+  if (rand() % 4 == 0) { /* 3/4 ratio, free the resource */
+    free(ptrs[index]);
+    ptrs[index] = 0;
+  }
 }
+
+
+void
+bar(int depth)
+{
+  int index = rand() % MAX_SLOT;
+
+  printf("bar(%d)\n", depth);
+
+  ptrs[index] = realloc(ptrs[index], rand() % ALLOC_MAX);
+
+  if (depth < MAX_DEPTH && rand() % 2) {
+    (*functions[rand() % MAX_FUNC])(depth + 1);
+  }
+
+  if (rand() % 2) { /* 3/4 ratio, free the resource */
+    free(ptrs[index]);
+    ptrs[index] = 0;
+  }
+}
+
+
+void
+car(int depth)
+{
+  int index = rand() % MAX_SLOT;
+
+  printf("car(%d)\n", depth);
+
+  if (rand() % 5 == 0)
+    dir = !dir;
+
+  if (dir) {
+    int amount = rand() % ALLOC_MAX;
+    printf("car(%d) -- resizing ptrs[%d] to %d\n", depth, index, amount);
+    ptrs[index] = realloc(ptrs[index], amount);
+  }
+  else {
+    printf("car(%d) -- freeing ptrs[%d]\n", depth, index);
+    free(ptrs[index]);
+    ptrs[index] = 0;
+  }
+}
+
+
+void
+cdr(int depth)
+{
+  int i = rand() % MAX_SLOT;
+  int count = 0;
+  int index;
+
+  while (i-- > 0) {
+    index = rand() % MAX_SLOT;
+    if (ptrs[index]) {
+      count++;
+      free(ptrs[index]);
+      ptrs[index] = 0;
+    }
+  }
+  printf("cdr(%d) -- releasing maximum %d slot(s)\n", depth, i);
+}
+
 
 int
 main(int argc, char *argv[])
 {
-  void *p;
+  int i;
 
-  if (argc >= 2) {
-    printf("int: %d\n", str2int(argv[1]));
+  srand(time(0));
+
+  if (argc != 2) {
+    fprintf(stderr, "usage: %s [CALLS]\n", argv[0]);
+    return 1;
   }
+  i = atoi(argv[1]);
 
-  //mb_stream = stderr;
-
-  //foo();
-  p = malloc(10);
-
-  p = realloc(p, 20);
-  p = realloc(p, 10);
-
-  free(p);
+  while (i-- > 0)
+    foo(0);
 
   return 0;
 }

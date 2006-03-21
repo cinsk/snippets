@@ -24,12 +24,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 
 #include <sys/time.h>
 #include <pthread.h>
 
 #include <malloc.h>
 #include <execinfo.h>
+
+#include <mbuddy.h>
 
 #define MB_LOGNAME      "mb.out"
 #define MAX_BACKTRACE   32
@@ -80,9 +83,9 @@ struct mb_head {
                         } while (0)
 
 #define SAVE_HOOK()     do { \
-                          __malloc_hook = mb_malloc; \
-                          __realloc_hook = mb_realloc; \
-                          __free_hook = mb_free; \
+                          __malloc_hook = mb_malloc_; \
+                          __realloc_hook = mb_realloc_; \
+                          __free_hook = mb_free_; \
                         } while (0)
 
 #define SET_PEAK()      do { \
@@ -90,9 +93,9 @@ struct mb_head {
                             mb_alloc_peak = mb_allocated; \
                         } while (0)
 
-static void *mb_malloc(size_t size, const void *caller);
-static void *mb_realloc(void *ptr, size_t size, const void *caller);
-static void mb_free(void *p, const void *caller);
+static void *mb_malloc_(size_t size, const void *caller);
+static void *mb_realloc_(void *ptr, size_t size, const void *caller);
+static void mb_free_(void *p, const void *caller);
 static void mb_log(const char *fmt, ...);
 
 static const char *log_pathname = 0;
@@ -115,6 +118,23 @@ void (*__malloc_initialize_hook)(void) = malloc_init;
 static int debug_mode = 1;
 static int backtrace_mode = 0;
 static int abort_mode = 0;
+
+#define STATS_MAX       17
+
+int stats[STATS_MAX];
+
+
+void
+add_stats(size_t size)
+{
+  int i;
+  for (i = STATS_MAX - 1; i >= 0; i--)
+    if (size >= (1 << i)) {
+      stats[i]++;
+      break;
+    }
+}
+
 
 static void
 init_env(void)
@@ -153,8 +173,28 @@ init_env(void)
 }
 
 
+void *
+mb_malloc(size_t size)
+{
+  return mb_malloc_(size, 0);
+}
+
+void *
+mb_realloc(void *ptr, size_t size)
+{
+  return mb_realloc_(ptr, size, 0);
+}
+
+
+void
+mb_free(void *p)
+{
+  return mb_free_(p, 0);
+}
+
+
 static void *
-mb_malloc(size_t size, const void *caller)
+mb_malloc_(size_t size, const void *caller)
 {
   void *p;
   struct mb_head *h;
@@ -174,6 +214,7 @@ mb_malloc(size_t size, const void *caller)
   malloc_called++;
   if (p) {
     mb_allocated += size;
+    add_stats(size);
     SET_PEAK();
 
     h = (struct mb_head *)p;
@@ -195,7 +236,7 @@ mb_malloc(size_t size, const void *caller)
 
 
 static void *
-mb_realloc(void *ptr, size_t size, const void *caller)
+mb_realloc_(void *ptr, size_t size, const void *caller)
 {
   void *p;
   struct mb_head *h = HEADER(ptr);
@@ -217,6 +258,7 @@ mb_realloc(void *ptr, size_t size, const void *caller)
 
     if (p) {
       mb_allocated += size;
+      add_stats(size);
       SET_PEAK();
     }
     print_trace();
@@ -252,6 +294,7 @@ mb_realloc(void *ptr, size_t size, const void *caller)
 
   if (p) {
     mb_allocated += size - oldsize;
+    add_stats(size);
     SET_PEAK();
   }
 
@@ -268,7 +311,7 @@ mb_realloc(void *ptr, size_t size, const void *caller)
 
 
 static void
-mb_free(void *p, const void *caller)
+mb_free_(void *p, const void *caller)
 {
   struct mb_head *h = HEADER(p);
   size_t oldsize;
@@ -302,19 +345,66 @@ char *mb_strndupa(const char *s, size_t n);
 #endif  /* _GNU_SOURCE */
 
 
+int
+ndigit(size_t size)
+{
+  int n = 0;
+
+  if (size == 0)
+    return 1;
+
+  while (size > 0) {
+    size /= 10;
+    n++;
+  }
+
+  return n;
+}
+
+
+void
+print_stats(void)
+{
+  int i, j, sum = 0;
+  double percent;
+
+  fprintf(mb_stream, "# Statistics ----------------\n#\n");
+
+  for (i = 0; i < STATS_MAX; i++)
+    sum += stats[i];
+
+  fprintf(mb_stream, "#  Total %d block(s) are allocated.\n#\n", sum);
+
+  for (i = 0; i < STATS_MAX; i++) {
+    fprintf(mb_stream, "#  >= %5u byte(s) block: ", 1 << i);
+
+    percent = (double)stats[i] / sum * 100.0;
+    fprintf(mb_stream, "%*d (%2d%%): ",
+            ndigit(sum), stats[i], (int)ceil(percent));
+
+    j = (int)ceil(percent * 0.4);
+    while (j-- > 0)
+      fputc('*', mb_stream);
+    fputc('\n', mb_stream);
+  }
+  fputc('\n', mb_stream);
+  fflush(mb_stream);
+}
+
 static void
 close_stream(void)
 {
   RESTORE_HOOK();
 
   fprintf(mb_stream, "#\n");
-  fprintf(mb_stream, "# Summary -------------------\n");
+  fprintf(mb_stream, "# Summary -------------------\n#\n");
+  fprintf(mb_stream, "#  peak: %zu byte(s)\n", mb_alloc_peak);
+  fprintf(mb_stream, "#  malloc called %d times\n", malloc_called);
+  fprintf(mb_stream, "#  realloc called %d times\n", realloc_called);
+  fprintf(mb_stream, "#  free called %d times\n", free_called);
   fprintf(mb_stream, "#\n");
-  fprintf(mb_stream, "# peak: %zu byte(s)\n", mb_alloc_peak);
-  fprintf(mb_stream, "# malloc called %d times\n", malloc_called);
-  fprintf(mb_stream, "# realloc called %d times\n", realloc_called);
-  fprintf(mb_stream, "# free called %d times\n", free_called);
-  fprintf(mb_stream, "#\n");
+
+  print_stats();
 
   if (mb_stream && mb_stream != stderr)
     fclose(mb_stream);
@@ -493,9 +583,9 @@ malloc_init(void)
   old_realloc_hook = __realloc_hook;
   old_free_hook = __free_hook;
 
-  __malloc_hook = mb_malloc;
-  __realloc_hook = mb_realloc;
-  __free_hook = mb_free;
+  __malloc_hook = mb_malloc_;
+  __realloc_hook = mb_realloc_;
+  __free_hook = mb_free_;
 }
 
 
@@ -536,7 +626,7 @@ typedef void (*func_t)(int);
 #define MAX_DEPTH       4
 #define MAX_SLOT        256
 
-#define ALLOC_MAX       (8 * 1024)
+#define ALLOC_MAX       (65 * 1024)
 
 void foo(int depth);
 void bar(int depth);
@@ -547,6 +637,26 @@ func_t functions[MAX_FUNC] = { foo, bar, car, cdr, };
 int dir = 1;
 
 void *ptrs[MAX_SLOT] = { 0, };
+
+
+size_t
+alloc_size()
+{
+  int a[8] = {
+    rand() % (ALLOC_MAX / 1000),
+    rand() % (ALLOC_MAX / 800),
+    rand() % (ALLOC_MAX / 500),
+    rand() % (ALLOC_MAX / 300),
+    rand() % (ALLOC_MAX / 150),
+    rand() % (ALLOC_MAX / 100),
+    rand() % (ALLOC_MAX / 10),
+    rand() % (ALLOC_MAX),
+  };
+  int i = rand() % 8;
+
+  return a[i] > 0 ? a[i] : 1;
+}
+
 
 void
 foo(int depth)
@@ -560,7 +670,7 @@ foo(int depth)
     ptrs[index] = 0;
   }
 
-  ptrs[index] = malloc(rand() % ALLOC_MAX + 1);
+  ptrs[index] = malloc(alloc_size());
 
   if (depth < MAX_DEPTH && rand() % 2) {
     (*functions[rand() % MAX_FUNC])(depth + 1);
@@ -580,7 +690,7 @@ bar(int depth)
 
   printf("bar(%d)\n", depth);
 
-  ptrs[index] = realloc(ptrs[index], rand() % ALLOC_MAX);
+  ptrs[index] = realloc(ptrs[index], alloc_size());
 
   if (depth < MAX_DEPTH && rand() % 2) {
     (*functions[rand() % MAX_FUNC])(depth + 1);
@@ -604,7 +714,7 @@ car(int depth)
     dir = !dir;
 
   if (dir) {
-    int amount = rand() % ALLOC_MAX;
+    int amount = alloc_size();
     printf("car(%d) -- resizing ptrs[%d] to %d\n", depth, index, amount);
     ptrs[index] = realloc(ptrs[index], amount);
   }
@@ -651,7 +761,10 @@ main(int argc, char *argv[])
   while (i-- > 0)
     foo(0);
 
+  malloc(1);
+  malloc(69999);
   return 0;
 }
 #endif  /* TEST_MBUDDY */
+
 

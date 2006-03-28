@@ -28,6 +28,8 @@
 #include <limits.h>
 #include <errno.h>
 
+#include <unistd.h>
+
 #include "obstack.h"
 
 #ifndef obstack_chunk_alloc
@@ -162,7 +164,7 @@ OBSTACK_COPY(struct obstack *stack, const void *address, int size)
 
 
 static __inline__ void *
-OBSTACK_COPY0(struct obstack *stack, void *address, int size)
+OBSTACK_COPY0(struct obstack *stack, const void *address, int size)
 {
   void *ptr;
   OBS_ERROR_CLEAR;
@@ -192,7 +194,7 @@ OBSTACK_BLANK(struct obstack *stack, int size)
 
 
 static __inline__ int
-OBSTACK_GROW(struct obstack *stack, void *data, int size)
+OBSTACK_GROW(struct obstack *stack, const void *data, int size)
 {
   OBS_ERROR_CLEAR;
   obstack_grow(stack, data, size);
@@ -203,7 +205,7 @@ OBSTACK_GROW(struct obstack *stack, void *data, int size)
 
 
 static __inline__ int
-OBSTACK_GROW0(struct obstack *stack, void *data, int size)
+OBSTACK_GROW0(struct obstack *stack, const void *data, int size)
 {
   OBS_ERROR_CLEAR;
   obstack_grow0(stack, data, size);
@@ -316,9 +318,15 @@ OBSTACK_CHUNK_SIZE(struct obstack *stack)
 }
 
 
+extern size_t obstack_capacity(struct obstack *stack);
+#define OBSTACK_CAPACITY(stack)         obstack_capacity(stack)
+
 #ifndef NDEBUG
-void OBSTACK_DUMP(struct obstack *stack);
-int OBSTACK_BELONG(struct obstack *stack, void *ptr, size_t size);
+extern void obstack_dump(struct obstack *stack);
+extern int obstack_belong(struct obstack *stack, void *ptr, size_t size);
+
+#define OBSTACK_DUMP(stack)             obstack_dump(stack)
+#define OBSTACK_BELONG(s, p, size)      obstack_belong(s, p, size)
 #endif  /* NDEBUG */
 
 
@@ -443,6 +451,7 @@ OBSTACK_DUP_GROW0(struct obstack *stack)
 //int OBSTACK_APPEND_GROW(struct obstack *stack, void *data, size_t size);
 //int OBSTACK_APPEND_GROW0(struct obstack *stack, void *data, size_t size);
 
+
 static __inline__ char *
 OBSTACK_STR_COPY(struct obstack *stack, const char *s)
 {
@@ -489,7 +498,7 @@ OBSTACK_STR_COPY3(struct obstack *stack,
 }
 
 
-static __inline__ char *
+static __inline__ int
 OBSTACK_STR_GROW(struct obstack *stack, const char *s)
 {
   return OBSTACK_GROW0(stack, s, strlen(s));
@@ -538,6 +547,145 @@ OBSTACK_STR_GROW3(struct obstack *stack,
 
   return base;
 }
+
+
+#ifndef NO_WCHAR_SUPPORT
+
+#include <wchar.h>
+
+static __inline__ int
+OBSTACK_WGROW0(struct obstack *stack, const void *data, int size)
+{
+  int s;
+
+  assert(size % sizeof(wchar_t) == 0);
+
+  s = OBSTACK_OBJECT_SIZE(stack);
+  if (OBSTACK_GROW(stack, data, size) < 0)
+    return -1;
+
+  if (OBSTACK_GROW(stack, L"", sizeof(wchar_t)) < 0) {
+    OBSTACK_BLANK(stack, -s);
+    return -1;
+  }
+  return 0;
+}
+
+
+static __inline__ void *
+OBSTACK_WCOPY0(struct obstack *stack, const void *address, int size)
+{
+  assert(size % sizeof(wchar_t) == 0); /* check the alignment */
+
+  if (OBSTACK_WGROW0(stack, address, size) < 0)
+    return 0;
+
+  return OBSTACK_FINISH(stack);
+}
+
+
+static __inline__ int
+OBSTACK_1WGROW(struct obstack *stack, wchar_t c)
+{
+  return OBSTACK_GROW(stack, &c, sizeof(c));
+}
+
+
+static __inline__ wchar_t *
+OBSTACK_WSTR_COPY(struct obstack *stack, const wchar_t *s)
+{
+  return OBSTACK_WCOPY0(stack, s, wcslen(s) * sizeof(wchar_t));
+}
+
+static __inline__ wchar_t *
+OBSTACK_WSTR_COPY2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
+{
+  wchar_t *p;
+  size_t l1 = wcslen(s1);
+  size_t l2 = wcslen(s2);
+
+  p = OBSTACK_ALLOC(stack, (l1 + l2 + 1) * sizeof(wchar_t));
+  if (!p)
+    return 0;
+
+  wcscpy(p, s1);
+  wcscpy(p + l1, s2);
+
+  return p;
+}
+
+
+static __inline__ wchar_t *
+OBSTACK_WSTR_COPY3(struct obstack *stack,
+                   const wchar_t *s1, const wchar_t *s2, const wchar_t *s3)
+{
+  wchar_t *ret;
+  int l1 = wcslen(s1);
+  int l2 = wcslen(s2);
+  int l3 = wcslen(s3);
+
+  ret = OBSTACK_ALLOC(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
+  if (!ret)
+    return 0;
+
+  wcscpy(ret, s1);
+  wcscpy(ret + l1, s2);
+  wcscpy(ret + l1 + l2, s3);
+
+  return ret;
+}
+
+
+static __inline__ int
+OBSTACK_WSTR_GROW(struct obstack *stack, const wchar_t *s)
+{
+  return OBSTACK_WGROW0(stack, s, wcslen(s) * sizeof(wchar_t));
+}
+
+
+static __inline__ int
+OBSTACK_WSTR_GROW2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
+{
+  wchar_t *base;
+  size_t size;
+  int l1 = wcslen(s1);
+  int l2 = wcslen(s2);
+
+  size = OBSTACK_OBJECT_SIZE(stack);
+  OBSTACK_BLANK(stack, (l1 + l2 + 1) * sizeof(wchar_t));
+  if (OBSTACK_ERROR())
+    return -1;
+
+  base = (wchar_t *)((char *)OBSTACK_BASE(stack) + size);
+  wcscpy(base, s1);
+  wcscpy(base + l1, s2);
+
+  return 0;
+}
+
+
+static __inline__ int
+OBSTACK_WSTR_GROW3(struct obstack *stack,
+                   const wchar_t *s1, const wchar_t *s2, const wchar_t *s3)
+{
+  wchar_t *base;
+  size_t size;
+  int l1 = wcslen(s1);
+  int l2 = wcslen(s2);
+  int l3 = wcslen(s3);
+
+  size = OBSTACK_OBJECT_SIZE(stack);
+  OBSTACK_BLANK(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
+  if (OBSTACK_ERROR())
+    return -1;
+  base = (wchar_t *)((char *)OBSTACK_BASE(stack) + size);
+  wcscpy(base, s1);
+  wcscpy(base + l1, s2);
+  wcscpy(base + l1 + l2, s3);
+
+  return 0;
+}
+#endif  /* NO_WCHAR_SUPPORT */
 
 
 #ifdef __cplusplus

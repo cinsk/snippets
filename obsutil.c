@@ -36,6 +36,21 @@ obsutil_init(void)
 }
 
 
+size_t
+obstack_capacity(struct obstack *stack)
+{
+  struct _obstack_chunk *chunk = stack->chunk;
+  size_t cap = 0;
+
+  while (chunk) {
+    cap += (unsigned char *)chunk->limit - (unsigned char *)chunk;
+    chunk = chunk->prev;
+  }
+
+  return cap;
+}
+
+
 #ifndef NDEBUG
 #include <stdio.h>
 /*
@@ -99,6 +114,33 @@ obstack_belong(struct obstack *stack, void *ptr, size_t size)
 #endif  /* NDEBUG */
 
 
+#ifdef TEST_OBSUTIL
+
+int
+main(int argc, char *argv[])
+{
+  struct obstack stack_;
+  struct obstack *stack = &stack_;
+  void *p, *q, *r;
+
+  if (OBSTACK_INIT(stack) < 0) {
+    fprintf(stderr, "OBSTACK_INIT() failed");
+    return 1;
+  }
+
+  p = OBSTACK_ALLOC(stack, 100);
+  q = OBSTACK_ALLOC(stack, 100);
+  r = OBSTACK_ALLOC(stack, 8196);
+  OBSTACK_ALLOC(stack, 100);
+  OBSTACK_ALLOC(stack, 100);
+  OBSTACK_ALLOC(stack, 100);
+  OBSTACK_FREE(stack, r);
+  OBSTACK_FREE(stack, p);
+
+  return 0;
+}
+
+#endif  /* TEST_OBSUTIL */
 
 
 

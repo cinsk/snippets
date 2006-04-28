@@ -19,6 +19,7 @@
 #include <futil.h>
 #include <obsutil.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
 
@@ -99,7 +100,19 @@ fu_islink(const char *pathname)
   if (lstat(pathname, &sbuf) < 0)
     return 0;
 
-  return fu_isdir_with_stat(&sbuf);
+  return fu_islink_with_stat(&sbuf);
+}
+
+
+long
+fu_blksize(const char *pathname)
+{
+  struct stat sbuf;
+
+  if (stat(pathname, &sbuf) < 0)
+    return 0;
+
+  return (long)sbuf.st_blksize;
 }
 
 
@@ -238,6 +251,8 @@ fu_find_files(const char *basedir, struct obstack *pool,
         cwd = OBSTACK_GETCWD(cwdpool);
       }
       else {       /* If something goes wrong, skip this directory. */
+        if (auxdir)
+          closedir(auxdir);
         OBSTACK_FREE(cwdpool, pathname);
       }
 
@@ -261,6 +276,7 @@ fu_find_files(const char *basedir, struct obstack *pool,
       OBSTACK_FREE(cwdpool, pathname);
     }
   }
+  closedir(dir);
 
   if (!OFFSET_ISEMPTY()) {
     off = OFFSET_POP();
@@ -271,6 +287,8 @@ fu_find_files(const char *basedir, struct obstack *pool,
     OBSTACK_FREE(cwdpool, cwd);
     cwd = OBSTACK_GETCWD(cwdpool);
     dir = opendir(cwd);
+    if (!dir)
+      return -1;
     seekdir(dir, off);
     goto read_entry;
   }

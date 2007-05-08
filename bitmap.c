@@ -36,7 +36,7 @@ bitmap_new(size_t nbits, unsigned flags)
      bitmap_t *bm;
      int size = (nbits + INT_BIT) / INT_BIT;
 
-     bm = malloc(sizeof(*bm) - sizeof(int) + size);
+     bm = malloc(sizeof(*bm) + (size - 1) * sizeof(int));
      if (!bm)
           return 0;
 
@@ -48,8 +48,9 @@ bitmap_new(size_t nbits, unsigned flags)
 }
 
 
-#define BITMAP_SIZE_REQUIRED(bits)      (sizeof(bitmap_t) - sizeof(int) + \
-                                         ((bits) + INT_BIT) / INT_BIT)
+#define BITMAP_SIZE_REQUIRED(bits)      (sizeof(bitmap_t) + \
+                                         (((bits) + INT_BIT) / INT_BIT - 1) * \
+                                         sizeof(int))
 
 bitmap_t *
 bitmap_new_with_buffer(size_t nbits, unsigned flags, void *src, size_t *len)
@@ -91,13 +92,23 @@ bitmap_t *
 bitmap_set_size(bitmap_t *bitmap, size_t nbits)
 {
      size_t size;
-     int i;
+     int i, oldbits;
 
      if (bitmap->num_bits == nbits)
           return 0;
 
      size = (nbits + INT_BIT) / INT_BIT;
-     bitmap = realloc(bitmap, sizeof(*bitmap) - sizeof(int) + size);
+
+     if ((bitmap->flags & BMO_STATIC) == 0)
+          bitmap = realloc(bitmap, sizeof(*bitmap) + (size - 1) * sizeof(int));
+     else {
+          if (bitmap->num_bits < nbits) {
+          }
+          else {
+               /* It is not guaranteed whether or not we have enough space */
+               return NULL;
+          }
+     }
      if (!bitmap)
           return 0;
 
@@ -105,8 +116,9 @@ bitmap_set_size(bitmap_t *bitmap, size_t nbits)
      bitmap->size = size;
 
      if (bitmap->num_bits < nbits) {
+          oldbits = bitmap->num_bits;
           bitmap->num_bits = nbits;
-          for (i = bitmap->num_bits; i < nbits; i++)
+          for (i = oldbits; i < nbits; i++)
                bitmap_clear(bitmap, i);
      }
      else

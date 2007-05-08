@@ -77,6 +77,7 @@ bitmap_new_with_buffer(size_t nbits, unsigned flags, void *src, size_t *len)
 void
 bitmap_delete(bitmap_t *bitmap)
 {
+     if
      free(bitmap);
 }
 
@@ -236,3 +237,9 @@ main(void)
      return 0;
 }
 #endif /* TEST_BITMAP */
+
+/*
+ * Local Variables:
+ * c-file-style: "k&r"
+ * End:
+ */

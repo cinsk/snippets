@@ -114,3 +114,9 @@ bitmap_clear_all(bitmap_t *bitmap)
 END_C_DECLS
 
 #endif /* BITMAP_H_ */
+
+/*
+ * Local Variables:
+ * c-file-style: "k&r"
+ * End:
+ */

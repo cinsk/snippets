@@ -1,6 +1,6 @@
 #!/bin/bash
 # Copyright (c) 2007 Seong-Kook Shin <cinsk@gmail.com>
-# Distributed under the terms of the GNU General Public License v2
+# Distributed in as-is condition. (No commercial use.)
 # $Id$
 
 ENDIC_URL="http://endic.naver.com/small_search.nhn?&query="

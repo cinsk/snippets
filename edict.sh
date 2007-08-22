@@ -87,7 +87,7 @@ case $dictype in
         ;;
     ko|KO|kr)
         dicurl=$ENDIC_URL
-        startmark='\[btn_close'
+        startmark='(검색결과|\[btn_close_)'
         ;;
     *)
         echo "error: unknown dictionary type \`$dictype'" 1>&2

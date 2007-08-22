@@ -5,8 +5,8 @@
 
 ENDIC_URL="http://endic.naver.com/small_search.nhn?&query="
 EEDIC_URL="http://eedic.naver.com/small.naver?where=keyword&query="
-MPLAYER_PATH=/usr/bin/mplayer
-DICT_PATH=/usr/bin/dict
+MPLAYER_PATH=mplayer
+DICT_PATH=dict
 
 # Default dictionary type
 dictype=en
@@ -74,6 +74,11 @@ while getopts "lt:h" opt; do
     esac
 done
 
+if test $# -lt $OPTIND; then
+    echo "error: argument required" 1>&2
+    echo "Try \`-h' for more information." 1>&2
+    exit 1
+fi
 
 case $dictype in
     en|EN)

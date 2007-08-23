@@ -8,6 +8,9 @@ EEDIC_URL="http://eedic.naver.com/small.naver?where=keyword&query="
 MPLAYER_PATH=mplayer
 DICT_PATH=dict
 
+PROGRAM_NAME="edict"
+REVISION_STR='$Revision$'
+
 # Default dictionary type
 dictype=en
 
@@ -21,7 +24,7 @@ fi
 
 function usage () {
     cat <<EOF
-usage: $0 [OPTION]... WORD...
+usage: $PROGRAM_NAME [OPTION]... WORD...
 Show the definition of WORD
 
   -t XX    specify the dictionary type to use
@@ -52,7 +55,7 @@ function exact_match () {
 
 
 OPTIND=0
-while getopts "lt:h" opt; do
+while getopts "lt:hV" opt; do
     case $opt in
         'l')
             option_listen=1
@@ -66,6 +69,11 @@ while getopts "lt:h" opt; do
             ;;
         'h')
             usage
+            ;;
+        'V')
+            echo "$PROGRAM_NAME $REVISION_STR" | \
+                sed -e 's/\$Revision$/\1/'
+            exit 0
             ;;
         *)
             echo "Try \`-h' for more information." 1>&2

@@ -72,7 +72,7 @@ while getopts "lt:hV" opt; do
             ;;
         'V')
             echo "$PROGRAM_NAME $REVISION_STR" | \
-                sed -e 's/\$Revision$/\1/'
+                sed -e 's/\$//g' | sed -e 's/Revision: \([0-9.]*\) /version \1/'
             exit 0
             ;;
         *)

@@ -72,7 +72,7 @@ while getopts "lt:hVn:" opt; do
         'l')
             option_listen=1
             if test -z "$enable_audio"; then
-                echo "warning: mplayer not found.  (Audio diabled)" 1>&2
+                echo "warning: mplayer not found.  (Audio disabled)" 1>&2
             fi
             ;;
         'n')

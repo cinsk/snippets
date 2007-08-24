@@ -5,8 +5,8 @@
 
 ENDIC_URL="http://endic.naver.com/small_search.nhn?&query="
 EEDIC_URL="http://eedic.naver.com/small.naver?where=keyword&query="
-MPLAYER_PATH=mplayer
-DICT_PATH=dict
+MPLAYER_PATH=`which mplayer`
+DICT_PATH=`which dict`
 
 PROGRAM_NAME="edict"
 REVISION_STR='$Revision$'
@@ -14,13 +14,16 @@ REVISION_STR='$Revision$'
 # Default dictionary type
 dictype=en
 
-if which dict >& /dev/null; then
+
+if test -x "$DICT_PATH"; then
     use_dict=1
 fi
 
-if which mplayer >& /dev/null; then
+if test -x "$MPLAYER_PATH"; then
     enable_audio=1
 fi
+
+repeat_count=1
 
 function usage () {
     cat <<EOF
@@ -32,6 +35,7 @@ Show the definition of WORD
      en    - English to English dictionary (Naver)
 
   -l       play the pronunciation audio
+  -n XX	   set repeat count of the audio play
 
   -h       display this help and exit
   -V       output version information and exit
@@ -55,13 +59,16 @@ function exact_match () {
 
 
 OPTIND=0
-while getopts "lt:hV" opt; do
+while getopts "lt:hVn:" opt; do
     case $opt in
         'l')
             option_listen=1
             if test -z "$enable_audio"; then
                 echo "warning: mplayer not found.  (Audio diabled)" 1>&2
             fi
+            ;;
+        'n')
+            repeat_count=$OPTARG
             ;;
         't')
             #echo "OPTARG: $OPTARG"
@@ -92,10 +99,12 @@ case $dictype in
     en|EN)
         dicurl=$EEDIC_URL
         startmark='^\[dot'
+        dictname="Collins COBUILD Advanced Learner's English Dictionary 4th Edition"
         ;;
     ko|KO|kr)
         dicurl=$ENDIC_URL
         startmark='(검색결과|\[btn_close_)'
+        dictname="동아 프라임 영한사전"
         ;;
     *)
         echo "error: unknown dictionary type \`$dictype'" 1>&2
@@ -121,15 +130,23 @@ for word in "$@"; do
     if test "$status" -ne 0; then
         if test "$use_dict"; then
             $DICT_PATH -P - $word
+            exit $?
         else
             echo "$word: not found" 1>&2
+            exit 1
         fi
     fi
 
     if test "$option_listen" -a "$enable_audio" -a $status -eq 0; then
         url=`w3m -dump_source "${EEDIC_URL}${word}" | grep showproun | sed "s/[^']*'\([^']*\)'.*$/\1/"`
-        echo -n "Playing..." 1>&2
-        $MPLAYER_PATH -really-quiet $url
-        echo "Done." 1>&2
+        while test "$repeat_count" -gt 0; do
+            echo -n "Playing..." 1>&2
+            $MPLAYER_PATH -really-quiet $url
+            echo "Done." 1>&2
+            repeat_count=`expr $repeat_count - 1`
+        done
     fi
+    echo -e "\n--"
+    echo "$dictname"
+    echo "A courtesy of Naver dictionary service (http://dic.naver.com/)"
 done

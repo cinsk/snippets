@@ -5,8 +5,10 @@
 
 ENDIC_URL="http://endic.naver.com/small_search.nhn?&query="
 EEDIC_URL="http://eedic.naver.com/small.naver?where=keyword&query="
-MPLAYER_PATH=`which mplayer`
-DICT_PATH=`which dict`
+
+W3M_PATH=`which w3m 2>/dev/null`
+MPLAYER_PATH=`which mplayer 2>/dev/null`
+DICT_PATH=`which dict 2>/dev/null`
 
 PROGRAM_NAME="edict"
 REVISION_STR='$Revision$'
@@ -14,6 +16,12 @@ REVISION_STR='$Revision$'
 # Default dictionary type
 dictype=en
 
+if test ! -x "$W3M_PATH"; then
+    echo "error: w3m(http://w3m.sourceforge.net/) not found." 1>&2
+    echo "error: Perhaps your system does not have w3m installed." 1>&2
+    echo "error: Or try to adjust the value of W3M_PATH in this script." 1>&2
+    exit 1
+fi
 
 if test -x "$DICT_PATH"; then
     use_dict=1

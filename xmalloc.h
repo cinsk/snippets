@@ -28,6 +28,18 @@ BEGIN_C_DECLS
 #define XMEM_STAT
 #define XMEM_REDZONE
 
+struct memstat_ {
+  int malloc_called;
+  int calloc_called;
+  int realloc_called;
+  int free_called;
+
+  size_t cur_size;
+  size_t max_size;
+  ssize_t limit;
+};
+typedef struct memstat_ memstat_t;
+
 #ifndef NDEBUG
 extern void *xmalloc(size_t size);
 extern void *xcalloc(size_t nmemb, size_t size);
@@ -43,18 +55,6 @@ extern long xmemopt(int option, ...);
 # define xmemstat(ms)           ((void)0)
 # define xmemopt(opt, val)      ((long)-1)
 #endif /* NDEBUG */
-
-struct memstat_ {
-  int malloc_called;
-  int calloc_called;
-  int realloc_called;
-  int free_called;
-
-  size_t cur_size;
-  size_t max_size;
-  ssize_t limit;
-};
-typedef struct memstat_ memstat_t;
 
 enum {
   X_SETLIM,                     /* Set memory limit */

@@ -24,17 +24,20 @@
 
 #include <obstack.h>
 
-#ifdef __cplusplus
-# ifndef BEGIN_C_DECLS
-#  define BEGIN_C_DECLS   extern "C" {
-#  define END_C_DECLS     }
-# endif
-#else
-# define BEGIN_C_DECLS
-# define END_C_DECLS
-#endif  /* __cplusplus */
+/* This indirect writing of extern "C" { ... } makes XEmacs happy */
+#ifndef BEGIN_C_DECLS
+# define BEGIN_C_DECLS   extern "C" {
+# define END_C_DECLS      }
+#endif  /* BEGIN_C_DECLS */
 
+#ifdef __cplusplus
 BEGIN_C_DECLS
+#endif
+
+
+#ifndef DIR_SEPARATOR
+#define DIR_SEPARATOR "/"
+#endif
 
 struct fu_findfiles_ {
   size_t nelem;
@@ -63,6 +66,8 @@ extern int fu_isdir(const char *pathname);
 extern char *fu_url2pathname(const char *url);
 extern int fu_datasync(const char *pathname);
 
+extern char *fu_path_concat(const char *lhs, const char *rhs);
+
 extern long fu_blksize(const char *pathname);
 
 #define FU_NORECURSE    0x0001
@@ -75,6 +80,8 @@ extern fu_findfiles_t *fu_find_files(const char *basedir, struct obstack *pool,
                                      int (*predicate)(const char *, void *),
                                      void *data);
 
+#ifdef __cplusplus
 END_C_DECLS
+#endif
 
 #endif  /* FUTIL_H__ */

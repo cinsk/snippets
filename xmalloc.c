@@ -18,7 +18,7 @@ static int realloc_called;
 static int free_called;
 static size_t xmem_cur_size;
 static size_t xmem_max_size;
-static FILE *xmem_error_stream = stderr;
+static FILE *xmem_error_stream = 0;
 static void (*xalloc_failed_handler)(void) = abort;
 
 #define XMEM_HEADER ((0x2B2B56 << 16) + 0x1F6781)

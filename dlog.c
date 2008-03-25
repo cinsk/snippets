@@ -42,8 +42,8 @@ dlog_set_output(FILE *fp)
 
   if (dlog_fp == NULL)
     dlog_fp = stderr;
-
-  dlog_fp = fp;
+  else
+    dlog_fp = fp;
 
   return old;
 }
@@ -94,7 +94,7 @@ dlog_(int ecode, int status, unsigned category, const char *format, ...)
   va_end(ap);
   fputc('\n', dlog_fp);
 
-  fflush(stderr);
+  fflush(dlog_fp);
   funlockfile(dlog_fp);
   funlockfile(stdout);
 
@@ -124,7 +124,7 @@ derror(int ecode, int status, const char *format, ...)
   va_end(ap);
   fputc('\n', dlog_fp);
 
-  fflush(stderr);
+  fflush(dlog_fp);
   funlockfile(dlog_fp);
   funlockfile(stdout);
 

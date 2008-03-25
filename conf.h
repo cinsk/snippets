@@ -49,8 +49,6 @@ extern int conf_load(CONF *cf, const char *pathname, int hash_size);
 extern int conf_save(CONF *cf, const char *headers[]);
 extern int conf_save_as(CONF *cf, const char *pathname, const char *headers[]);
 
-extern char *conf_set_pathname(CONF *cf, const char *pathname);
-
 //extern CONF *conf_open(const char *pathname, int size_hint);
 extern int conf_close(CONF *cf);
 

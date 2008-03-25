@@ -22,8 +22,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
-#include <utime.h>
-#include <stdio.h>
+
 
 static struct obstack cwdpool_;
 static struct obstack offpool_;
@@ -328,34 +327,3 @@ fu_find_files(const char *basedir, struct obstack *pool,
   return 0;
 }
 
-
-int
-touch(const char *file, time_t tm)
-{
-  struct utimbuf times;
-  times.actime = times.modtime = tm;
-
-  return utime(file, &times);
-}
-
-
-char *
-fu_path_concat(const char *lhs, const char *rhs)
-{
-  char *s;
-  int len;
-  int last_char_is_sep = 0;
-
-  len = strlen(lhs);
-
-  if (lhs[len - 1] == DIR_SEPARATOR[0])
-    last_char_is_sep = 1;
-
-  len = len + 1 + strlen(rhs) + 1 - last_char_is_sep;
-  s = malloc(len);
-  if (!s)
-    return NULL;
-
-  sprintf(s, "%s%s%s", lhs, (last_char_is_sep) ? "" : DIR_SEPARATOR, rhs);
-  return s;
-}

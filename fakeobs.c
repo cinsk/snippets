@@ -5,7 +5,7 @@
  */
 #include <stdlib.h>
 #include <string.h>
-#include "fakeobs.h"
+#include "obstack.h"
 
 #define DEF_MAX_PTRS    32
 

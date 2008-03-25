@@ -69,7 +69,7 @@ obstack_dump(struct obstack *stack)
   printf("==   chunk:          [0x%08x]\n", (unsigned)stack->chunk);
   printf("==   next_free:      [0x%08x]\n", (unsigned)stack->next_free);
   printf("==   chunk_limit:    [0x%08x]\n", (unsigned)stack->chunk_limit);
-  //printf("==   temp: %ld\n", (unsigned long)stack->temp);
+  printf("==   temp: %ld\n", (unsigned long)stack->temp);
   printf("==   alignment_mask: 0x%lx\n", (unsigned long)stack->alignment_mask);
   printf("==   use_extra_arg:      %u\n", stack->use_extra_arg);
   printf("==   maybe_empty_object: %u\n", stack->maybe_empty_object);

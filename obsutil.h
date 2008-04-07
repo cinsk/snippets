@@ -27,10 +27,15 @@
 #include <assert.h>
 #include <limits.h>
 #include <errno.h>
+#include <string.h>
 
 #include <unistd.h>
 
+#ifdef FAKEOBJS
+#include "fakeobs.h"
+#else
 #include "obstack.h"
+#endif
 
 #ifndef obstack_chunk_alloc
 # include <stdlib.h>

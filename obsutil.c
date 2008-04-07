@@ -36,6 +36,7 @@ obsutil_init(void)
 }
 
 
+#ifndef FAKEOBJS
 size_t
 obstack_capacity(struct obstack *stack)
 {
@@ -49,7 +50,13 @@ obstack_capacity(struct obstack *stack)
 
   return cap;
 }
-
+#else
+size_t
+obstack_capacity(struct obstack *stack)
+{
+  return 0;
+}
+#endif  /* FAKEOBJS */
 
 #ifndef NDEBUG
 #include <stdio.h>
@@ -60,6 +67,7 @@ obstack_capacity(struct obstack *stack)
 void
 obstack_dump(struct obstack *stack)
 {
+#ifndef FAKEOBJS
   struct _obstack_chunk *chunk;
   int i = 0;
 
@@ -69,7 +77,7 @@ obstack_dump(struct obstack *stack)
   printf("==   chunk:          [0x%08x]\n", (unsigned)stack->chunk);
   printf("==   next_free:      [0x%08x]\n", (unsigned)stack->next_free);
   printf("==   chunk_limit:    [0x%08x]\n", (unsigned)stack->chunk_limit);
-  printf("==   temp: %ld\n", (unsigned long)stack->temp);
+  //printf("==   temp: %ld\n", (unsigned long)stack->temp);
   printf("==   alignment_mask: 0x%lx\n", (unsigned long)stack->alignment_mask);
   printf("==   use_extra_arg:      %u\n", stack->use_extra_arg);
   printf("==   maybe_empty_object: %u\n", stack->maybe_empty_object);
@@ -88,9 +96,11 @@ obstack_dump(struct obstack *stack)
 
     chunk = chunk->prev;
   }
+#endif  /* FAKEOBJS */
 }
 
 
+#ifndef FAKEOBJS
 int
 obstack_belong(struct obstack *stack, void *ptr, size_t size)
 {
@@ -111,6 +121,13 @@ obstack_belong(struct obstack *stack, void *ptr, size_t size)
   }
   return 0;
 }
+#else
+int
+obstack_belong(struct obstack *stack, void *ptr, size_t size)
+{
+  return -1;
+}
+#endif  /* FAKEOBJS */
 #endif  /* NDEBUG */
 
 

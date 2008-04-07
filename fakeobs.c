@@ -5,7 +5,7 @@
  */
 #include <stdlib.h>
 #include <string.h>
-#include "obstack.h"
+#include "fakeobs.h"
 
 #define DEF_MAX_PTRS    32
 
@@ -81,6 +81,7 @@ void
 obstack_free_(struct obstack *stack, void *ptr, void (*free_func)(void *))
 {
   int i;
+
   for (i = stack->current; i >= 0; i--) {
     free_func(stack->ptrs[i]);
     if (stack->ptrs[i] == ptr) {
@@ -89,6 +90,11 @@ obstack_free_(struct obstack *stack, void *ptr, void (*free_func)(void *))
       break;
     }
     stack->ptrs[i] = 0;
+  }
+
+  if (ptr == NULL) {
+    free_func(stack->ptrs);
+    stack->ptrs = 0;
   }
 }
 

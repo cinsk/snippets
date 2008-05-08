@@ -43,7 +43,7 @@ main(int argc, char *argv[])
   unsigned int l;
   unsigned long val;
 
-  while ((opt = getopt(argc, argv, "sde")) != -1) {
+  while ((opt = getopt(argc, argv, "hsde")) != -1) {
     switch (opt) {
     case 'd':
       option_encode = 0;
@@ -115,6 +115,8 @@ help_and_exit(void)
 
   for (i = 0; i < sizeof(msgs) / sizeof(char *); i++)
     puts(msgs[i]);
+
+  exit(0);
 }
 
 

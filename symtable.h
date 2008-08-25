@@ -43,10 +43,28 @@ extern symtable_t *symtable_new(size_t table_size,
 /* Register new (NAME, DATA) pair
  *
  * Register DATA with LEN size in the NAME of the current frame in ST.
- * If the current frame already have NAME, the old data will be removed.
+ * If the current frame already have NAME, the old data will be removed
+ * by using symtable_unregister().
+ *
+ * You can pass -1 to LEN, if DATA is null-terminated string.  If you
+ * pass 0 to LEN, DATA is ignored.
  */
 extern int symtable_register(symtable_t *st,
-                             const char *name, void *data, size_t len);
+                             const char *name, void *data, int len);
+
+/* Register new (NAME, DATA) pair with variable substitution.
+ *
+ * Register null-terminated string, pointed by DATA in the NAME of the
+ * current frame in ST.
+ *
+ * If the current frame already have NAME, the old data will be removed
+ * by using symtable_unregister().
+ *
+ * This function substitutes Any substring of the form "${name}" to
+ * the value of "name" in the ST.
+ */
+extern int symtable_register_substitute(symtable_t *st,
+                                        const char *name, const char *data);
 
 /* Unregister KEY from the current frame.
  *
@@ -55,6 +73,9 @@ extern int symtable_register(symtable_t *st,
  * Note that occupied memory will not be freed until symtable_leave() will
  * called.  However, this function DOES call user-registered free function.
  * See `symtable_free_t'.
+ *
+ * symtable_unregister() returns 0 when it removes the KEY from the current
+ * frame. Otherwise it returns -1.
  */
 extern int symtable_unregister(symtable_t *st, const char *key);
 

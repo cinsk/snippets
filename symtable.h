@@ -40,6 +40,10 @@ typedef struct symtable_ symtable_t;
 extern symtable_t *symtable_new(size_t table_size,
                                 size_t max_depth, unsigned flags);
 
+/* Delete the symbol table.
+ */
+extern void symtable_delete(symtable_t *st);
+
 /* Register new (NAME, DATA) pair
  *
  * Register DATA with LEN size in the NAME of the current frame in ST.
@@ -50,8 +54,7 @@ extern symtable_t *symtable_new(size_t table_size,
  * pass 0 to LEN, DATA is ignored.
  */
 extern int symtable_register(symtable_t *st,
-                             const char *name, void *data, int len);
-
+                             const char *name, const void *data, int len);
 /* Register new (NAME, DATA) pair with variable substitution.
  *
  * Register null-terminated string, pointed by DATA in the NAME of the
@@ -65,6 +68,7 @@ extern int symtable_register(symtable_t *st,
  */
 extern int symtable_register_substitute(symtable_t *st,
                                         const char *name, const char *data);
+
 
 /* Unregister KEY from the current frame.
  *
@@ -110,6 +114,17 @@ extern int symtable_enter(symtable_t *st, const char *name);
  */
 extern int symtable_leave(symtable_t *table);
 
+
+extern int symtable_current_frame(symtable_t *table);
+extern const char *symtable_get_frame_name(symtable_t *table, int frame_id);
+
+typedef int (*symtable_enum_t)(const char *name,
+                               const void *value,
+                               size_t size_value,
+                               int frame, void *data);
+
+extern int symtable_enumerate(symtable_t *sp, int frame,
+                              symtable_enum_t proc, void *data);
 
 extern void symtable_dump(symtable_t *p);
 

@@ -26,6 +26,8 @@ obstack_init_(struct obstack *stack, void *(*alloc_func)(size_t))
   int i;
 
   stack->grow = 0;
+  stack->grow_size = 0;
+
   stack->current = -1;
 
   stack->ptrs = alloc_func(sizeof(void *) * DEF_MAX_PTRS);
@@ -44,6 +46,8 @@ grow_ptrs(struct obstack *stack, void *(*realloc_func)(void *, size_t))
 {
   int n;
   void **p;
+  int i;
+
   n = stack->num_ptrs + DEF_MAX_PTRS;
   p = realloc_func(stack->ptrs, sizeof(void *) * n);
   if (!p) {
@@ -52,6 +56,11 @@ grow_ptrs(struct obstack *stack, void *(*realloc_func)(void *, size_t))
   }
   stack->num_ptrs = n;
   stack->ptrs = p;
+
+  for (i = stack->current + 1; i < stack->num_ptrs; i++) {
+    stack->ptrs[i] = 0;
+  }
+
   return 0;
 }
 
@@ -259,3 +268,37 @@ obstack_1grow_fast(struct obstack *stack, char c)
   abort();
 }
 
+
+#ifdef TEST_FAKEOBS
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+int
+main(void)
+{
+  struct obstack pool;
+  int i;
+  char *mark;
+  char *p;
+
+  srandom(time(NULL));
+  obstack_init(&pool);
+
+  for (i = 0; i < 32; i++) {
+    p = obstack_alloc(&pool, random() % 4096);
+
+    if (i == 10)
+      mark = p;
+  }
+  obstack_free(&pool, mark);
+
+  for (i = 0; i < 10; i++) {
+    obstack_blank(&pool, random() % 4096);
+  }
+  obstack_finish(&pool);
+  obstack_free(&pool, NULL);
+  return 0;
+}
+
+#endif  /* TEST_FAKEOBS */

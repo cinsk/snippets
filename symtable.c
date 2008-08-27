@@ -119,6 +119,77 @@ symtable_delete(symtable_t *st)
 
 
 int
+symtable_register_frame(symtable_t *st, int frame,
+                        const char *name, const void *data, int len)
+{
+  int index;
+  struct snode *p, *q, *r;
+
+  symtable_unregister_frame(st, frame, name);
+
+  if (frame < 0)
+    frame = st->depth;
+
+  index = symtable_hash(name) % st->size_table;
+
+  p = OBSTACK_ALLOC(st->pool, sizeof(*p));
+  if (!p)
+    return -1;
+  p->valid = 0;
+
+  p->name = OBSTACK_STR_COPY(st->pool, name);
+  if (!p->name) {
+    OBSTACK_FREE(st->pool, p);
+    return -1;
+  }
+
+  if (len < 0)
+    len = strlen(data) + 1;
+
+  if (len > 0) {
+    p->val = OBSTACK_ALLOC(st->pool, len);
+    memcpy(p->val, data, len);
+  }
+  else
+    p->val = NULL;
+  p->size_val = len;
+
+  p->flnk = st->frame[frame].link;
+  st->frame[frame].link = p;
+  p->frame = frame;
+
+  for (r = NULL, q = st->table[index]; q != NULL; q = q->next) {
+    if (frame > q->frame)
+      break;
+    r = q;
+  }
+
+  p->next = q;
+  p->prev = r;
+
+  if (q)
+    q->prev = p;
+
+  if (r)
+    r->next = p;
+  else
+    st->table[index] = p;
+
+  p->valid = 1;
+
+  return 0;
+}
+
+
+int
+symtable_register(symtable_t *st, const char *name, const void *data, int len)
+{
+  return symtable_register_frame(st, -1, name, data, len);
+}
+
+
+#if 0
+int
 symtable_register(symtable_t *st, const char *name, const void *data, int len)
 {
   int index;
@@ -170,13 +241,18 @@ symtable_register(symtable_t *st, const char *name, const void *data, int len)
 
   return 0;
 }
+#endif  /* 0 */
 
 
 int
-symtable_unregister(symtable_t *st, const char *key)
+symtable_unregister_frame(symtable_t *st, int frame, const char *key)
 {
   struct snode *p;
-  p = symtable_lookup_node(st, key, SYMTABLE_OPT_CFRAME);
+
+  if (frame < 0)
+    p = symtable_lookup_node(st, key, SYMTABLE_OPT_CFRAME);
+  else
+    p = symtable_lookup_node(st, key, SYMTABLE_OPT_FRAME + frame);
 
   if (!p)
     return -1;
@@ -186,6 +262,13 @@ symtable_unregister(symtable_t *st, const char *key)
 
   p->valid = 0;
   return 0;
+}
+
+
+int
+symtable_unregister(symtable_t *st, const char *key)
+{
+  return symtable_unregister_frame(st, -1, key);
 }
 
 
@@ -204,8 +287,16 @@ symtable_lookup_node(symtable_t *st, const char *key, unsigned flags)
         else
           return NULL;
       }
-      else
-        return p;
+      else {
+        if (flags & SYMTABLE_OPT_FRAME) {
+          if (p->frame == (flags & SYMTABLE_OPT_FRAME_MASK))
+            return p;
+          else
+            continue;
+        }
+        else
+          return p;
+      }
     }
   }
   return NULL;
@@ -296,6 +387,20 @@ symtable_get_frame_name(symtable_t *table, int frame_id)
 }
 
 
+void *
+symtable_alloc(symtable_t *table, size_t size)
+{
+  return OBSTACK_ALLOC(table->pool, size);
+}
+
+
+char *
+symtable_strdup(symtable_t *table, const char *s)
+{
+  return OBSTACK_STR_COPY(table->pool, s);
+}
+
+
 /*
  * Substitute all variable form of "${name}" to the value of variable
  * "name" in the symbol table.
@@ -307,16 +412,82 @@ symtable_get_frame_name(symtable_t *table, int frame_id)
  * On success, this function returns zero.  Otherwise returns -1.
  */
 static int
-symtable_var_substitute(symtable_t *st, char *s)
+symtable_var_substitute(symtable_t *st)
+{
+  /*
+   * All the operations rely on `s', which is returned by
+   * OBSTACK_BASE().  Since we are growing the object inside of
+   * obstack, The address of `s' may change during the operation.
+   * That's why this function uses offset value (i, j) heavily.
+   */
+  size_t len;
+  char *s, *ptr;
+  int i, j;
+  char *name, *val;
+  int var_found = 0;
+
+  s = OBSTACK_BASE(st->pool);
+  len = strlen(s);
+
+ again:
+  for (i = len - 1; i >= 0; i--) {
+    if (s[i] == '$') {
+      if (i > 0 && s[i - 1] == '\\')
+        continue;
+
+      if (s[i + 1] == '{') {
+        var_found = 1;
+
+        ptr = strchr(s + i + 1, '}');
+        if (!ptr) {
+          /* error: closing '}' is not found */
+          return -1;
+        }
+        j = ptr - s;
+        s[j] = '\0';
+
+        name = s + i + 2;
+        val = symtable_lookup(st, name, NULL, 0);
+
+        if (!val)
+          strcpy(s + i, s + j + 1);
+        else {
+          size_t val_len = strlen(val);
+          size_t remained = strlen(s + j + 1);
+          if (OBSTACK_BLANK(st->pool, val_len) < 0)
+            return -1;
+          /* `s' changed to new location. */
+          s = OBSTACK_BASE(st->pool);
+          memmove(s + i + val_len, s + j + 1, remained + 1);
+          memcpy(s + i, val, val_len);
+        }
+      }
+    }
+  }
+  if (var_found) {
+    var_found = 0;
+    goto again;
+  }
+  return 0;
+}
+
+
+#if 0
+/* BUGGY */
+static int
+symtable_var_substitute(symtable_t *st)
 {
   size_t len;
   char *p, *q;
   char *name, *val;
   int var_found = 0;
+
+  s = OBSTACK_BASE(st->pool);
   len = strlen(s);
 
  again:
-  for (p = s + len; p >= s; p--) {
+
+  for (p = s + len - 1; p >= s; p--) {
     if (*p == '$') {
       if (p > s && *(p - 1) == '\\') {
         continue;
@@ -356,17 +527,24 @@ symtable_var_substitute(symtable_t *st, char *s)
 
   return 0;
 }
-
+#endif  /* 0 */
 
 int
-symtable_register_substitute(symtable_t *st, const char *name,
-                             const char *data)
+symtable_register_substitute_frame(symtable_t *st, int frame,
+                                   const char *name, const char *data)
 {
   struct snode *snptr;
   int size;
 
-  symtable_register(st, name, 0, 0);
-  snptr = symtable_lookup_node(st, name, SYMTABLE_OPT_CFRAME);
+  assert(OBSTACK_OBJECT_SIZE(st->pool) == 0);
+
+  symtable_register_frame(st, frame, name, 0, 0);
+
+  if (frame < 0)
+    snptr = symtable_lookup_node(st, name, SYMTABLE_OPT_CFRAME);
+  else
+    snptr = symtable_lookup_node(st, name, SYMTABLE_OPT_FRAME + frame);
+
   if (!snptr) {
     /* huh? */
     return 0;
@@ -375,7 +553,7 @@ symtable_register_substitute(symtable_t *st, const char *name,
 
   size = strlen(data) + 1;
   OBSTACK_GROW(st->pool, data, size);
-  if (symtable_var_substitute(st, OBSTACK_BASE(st->pool)) < 0) {
+  if (symtable_var_substitute(st) < 0) {
     return -1;
   }
 
@@ -385,6 +563,35 @@ symtable_register_substitute(symtable_t *st, const char *name,
   snptr->valid = 1;
 
   return 0;
+}
+
+
+int
+symtable_register_substitute(symtable_t *st,
+                             const char *name, const char *data)
+{
+  return symtable_register_substitute_frame(st, -1, name, data);
+}
+
+
+char *
+symtable_string_substitute(symtable_t *st, const char *data)
+{
+  char *p, *q;
+  int size;
+
+  assert(OBSTACK_OBJECT_SIZE(st->pool) == 0);
+
+  size = strlen(data) + 1;
+  OBSTACK_GROW(st->pool, data, size);
+  if (symtable_var_substitute(st) < 0) {
+    return NULL;
+  }
+  q = OBSTACK_FINISH(st->pool);
+  p = strdup(q);
+
+  OBSTACK_FREE(st->pool, q);
+  return p;
 }
 
 
@@ -546,14 +753,14 @@ symtable_dump(symtable_t *p)
   for (i = 0; i < p->size_table; i++) {
     node = p->table[i];
     if (node) {
-      printf("    [%s]", node->name);
+      printf("    [%d:%s]", node->frame, node->name);
       node = node->next;
     }
     else
       printf("    [NIL]");
 
     for (; node != NULL; node = node->next) {
-      printf("->[%s]", node->name);
+      printf("->[%d:%s]", node->frame, node->name);
     }
     putchar('\n');
   }
@@ -607,16 +814,6 @@ enum_proc(const char *name, const void *value, size_t size_value,
 
 symtable_t *symbol_table;
 
-symtable_t *
-table_init(void)
-{
-  symtable_t *p = symtable_new(32, 4, 0);
-  return p;
-}
-
-
-symtable_t *symbol_table;
-
 int
 init_interpreter(int *argc, char **argv[])
 {
@@ -624,12 +821,6 @@ init_interpreter(int *argc, char **argv[])
   return 0;
 }
 
-int
-init_interpreter(int *argc, char **argv[])
-{
-  symbol_table = table_init();
-  return 0;
-}
 
 int
 main(int argc, char *argv[], char *envp[])
@@ -646,7 +837,29 @@ main(int argc, char *argv[], char *envp[])
   //symtable_dump(table);
   //symtable_register(table, "name", "Seong-Kook Shi1", strlen("Seong-Kook Shin") + 1);
 
-  if (0) {
+  if (1) {
+#if 1
+    symtable_register(table, "foo", "1", -1);
+    symtable_enter(table, NULL);
+    symtable_register(table, "foo", "2", -1);
+    symtable_enter(table, NULL);
+    symtable_register(table, "foo", "3", -1);
+    symtable_enter(table, NULL);
+    symtable_register(table, "foo", "4", -1);
+
+    printf("foo: %s\n", symtable_lookup(table, "foo", NULL, 0));
+    printf("foo: 2:%s\n", symtable_lookup(table, "foo", NULL, SYMTABLE_OPT_FRAME + 2));
+    printf("foo: 1:%s\n", symtable_lookup(table, "foo", NULL, SYMTABLE_OPT_FRAME + 1));
+    printf("foo: 0:%s\n", symtable_lookup(table, "foo", NULL, SYMTABLE_OPT_FRAME + 0));
+    symtable_leave(table);
+    printf("foo: %s\n", symtable_lookup(table, "foo", NULL, 0));
+    symtable_leave(table);
+    printf("foo: %s\n", symtable_lookup(table, "foo", NULL, 0));
+    symtable_leave(table);
+    printf("foo: %s\n", symtable_lookup(table, "foo", NULL, 0));
+    return 1;
+#endif  /* 0 */
+
     while (fgets(buf, 1024, stdin) != 0) {
       if (buf[0] == '\n')
         continue;
@@ -659,7 +872,10 @@ main(int argc, char *argv[], char *envp[])
       case '~':
         printf("Leave current frame\n");
         symtable_dump(table);
-        symtable_leave(table);
+        if (symtable_leave(table) < 0) {
+          fprintf(stderr, "error: no frame; can't leave\n");
+          symtable_enter(table, NULL);
+        }
         continue;
       default:
         break;
@@ -676,8 +892,9 @@ main(int argc, char *argv[], char *envp[])
 
     symtable_dump(table);
   }
+  else {
+    char *p;
 
-  {
     import_env(table, envp);
 
     printf("SHELL=|%s|\n", (char *)symtable_lookup(table, "SHELL", 0, 0));
@@ -687,12 +904,15 @@ main(int argc, char *argv[], char *envp[])
     symtable_register_substitute(table, "TEXT",
                                  "Hello, ${FOO}, from ${BAR}.");
     printf("result: %s\n", (char *)symtable_lookup(table, "TEXT", 0, 0));
-#endif  /* 0 */
 
     symtable_register_substitute(table, argv[1], argv[2]);
     printf("%s=|%s|\n", argv[1],
            (char *)symtable_lookup(table, argv[1], 0, 0));
+#endif  /* 0 */
 
+    p = symtable_string_substitute(table, "XX${SHELL}XX");
+    printf("|%s|\n", p);
+    free(p);
 
     //p = symtable_esc_substitute(table, "hello\nwq\\\ner\\$df");
     //symtable_enumerate(table, 0, enum_proc, NULL);

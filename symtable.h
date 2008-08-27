@@ -23,7 +23,10 @@
 
 #include <obsutil.h>
 
-#define SYMTABLE_OPT_CFRAME     0x0001
+#define SYMTABLE_OPT_CFRAME     0x8000
+
+#define SYMTABLE_OPT_FRAME_MASK 0x00FF
+#define SYMTABLE_OPT_FRAME      0x0100
 
 typedef void (*symtable_free_t)(const char *name, void *data, size_t len);
 
@@ -55,6 +58,10 @@ extern void symtable_delete(symtable_t *st);
  */
 extern int symtable_register(symtable_t *st,
                              const char *name, const void *data, int len);
+
+extern int symtable_register_frame(symtable_t *st, int frame,
+                                   const char *name, const void *data, int len);
+
 /* Register new (NAME, DATA) pair with variable substitution.
  *
  * Register null-terminated string, pointed by DATA in the NAME of the
@@ -69,6 +76,10 @@ extern int symtable_register(symtable_t *st,
 extern int symtable_register_substitute(symtable_t *st,
                                         const char *name, const char *data);
 
+extern int symtable_register_substitute_frame(symtable_t *st, int frame,
+                                              const char *name,
+                                              const char *data);
+
 
 /* Unregister KEY from the current frame.
  *
@@ -82,6 +93,7 @@ extern int symtable_register_substitute(symtable_t *st,
  * frame. Otherwise it returns -1.
  */
 extern int symtable_unregister(symtable_t *st, const char *key);
+extern int symtable_unregister_frame(symtable_t *st, int frame, const char *key);
 
 /*
  * Look up the definition of KEY.
@@ -114,6 +126,14 @@ extern int symtable_enter(symtable_t *st, const char *name);
  */
 extern int symtable_leave(symtable_t *table);
 
+
+/*
+ * Allocate a memory block in the current frame.
+ */
+void *symtable_alloc(symtable_t *table, size_t size);
+char *symtable_strdup(symtable_t *table, const char *s);
+
+extern char *symtable_string_substitute(symtable_t *st, const char *data);
 
 extern int symtable_current_frame(symtable_t *table);
 extern const char *symtable_get_frame_name(symtable_t *table, int frame_id);

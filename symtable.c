@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "symtable.h"
 
@@ -44,14 +45,25 @@ struct snode {
 
   size_t size_val;              /* size of the VAL */
 
-  void *val;
-#if 0
-  char val[0];                  /* value of (key, value) pair.
-                                 * Should be the last member */
-#endif  /* 0 */
+  void *val;                    /* value of (key, value) pair.
+                                 * This points the malloc-ed memory area */
 };
 
-
+/*
+ * For maintainers:
+ *
+ * Before revison 1.5, If the symtable_register() reset the value of
+ * any pre-existing symbol in the outer frame, after leaving the
+ * current frame, the value of the symbol will be automatically
+ * deallcated.  This may cause SIGSEGV.
+ *
+ * Since revision 1.5, to resolve this bug, any data pointed by `val'
+ * member of struct snode is not allcated in symtable_t::pool.
+ * Instead it is dynamically allocated using malloc() and realloc().
+ *
+ * Note that this bug fix may cause symtable module little bit slower.
+ * I'll deal with it later -- cinsk
+ */
 #define symtable_hash(s)        symtable_hash_from_gcc(s)
 
 static unsigned long symtable_hash_from_glib(const char *s);
@@ -125,10 +137,30 @@ symtable_register_frame(symtable_t *st, int frame,
   int index;
   struct snode *p, *q, *r;
 
-  symtable_unregister_frame(st, frame, name);
-
-  if (frame < 0)
+  if (frame < 0) {
     frame = st->depth;
+    p = symtable_lookup_node(st, name, SYMTABLE_OPT_CFRAME);
+  }
+  else
+    p = symtable_lookup_node(st, name, SYMTABLE_OPT_FRAME + frame);
+  if (p) {
+    if (len < 0)
+      len = strlen(data) + 1;
+
+    if (len > 0) {
+      p->val = realloc(p->val, len);
+      if (!p->val)
+        return -1;
+      memcpy(p->val, data, len);
+    }
+    else
+      p->val = NULL;
+    p->size_val = len;
+    return 0;
+  }
+
+  if (frame != st->depth)
+    return -1;
 
   index = symtable_hash(name) % st->size_table;
 
@@ -147,7 +179,11 @@ symtable_register_frame(symtable_t *st, int frame,
     len = strlen(data) + 1;
 
   if (len > 0) {
-    p->val = OBSTACK_ALLOC(st->pool, len);
+    p->val = malloc(len);
+    if (!p->val) {
+      OBSTACK_FREE(st->pool, p);
+      return -1;
+    }
     memcpy(p->val, data, len);
   }
   else
@@ -261,6 +297,11 @@ symtable_unregister_frame(symtable_t *st, int frame, const char *key)
     st->free_func(p->name, p->val, p->size_val);
 
   p->valid = 0;
+
+  free(p->val);
+  p->val = 0;
+  p->size_val = 0;
+
   return 0;
 }
 
@@ -352,9 +393,15 @@ symtable_leave(symtable_t *st)
   for (p = st->frame[st->depth].link; p != NULL; p = p->flnk) {
     index = symtable_hash(p->name) % st->size_table;
 
-    if (p->valid && st->free_func) {
-      st->free_func(p->name, p->val, p->size_val);
+    if (p->valid) {
+      if (st->free_func)
+        st->free_func(p->name, p->val, p->size_val);
+
       p->valid = 0;
+
+      free(p->val);
+      p->val = NULL;
+      p->size_val = 0;
     }
 
     if (p->prev != NULL)
@@ -535,10 +582,12 @@ symtable_register_substitute_frame(symtable_t *st, int frame,
 {
   struct snode *snptr;
   int size;
+  char *p;
 
   assert(OBSTACK_OBJECT_SIZE(st->pool) == 0);
 
-  symtable_register_frame(st, frame, name, 0, 0);
+  if (symtable_register_frame(st, frame, name, 0, 0) < 0)
+    return -1;
 
   if (frame < 0)
     snptr = symtable_lookup_node(st, name, SYMTABLE_OPT_CFRAME);
@@ -557,8 +606,15 @@ symtable_register_substitute_frame(symtable_t *st, int frame,
     return -1;
   }
 
-  snptr->val = OBSTACK_FINISH(st->pool);
-  snptr->size_val = strlen(snptr->val);
+  snptr->size_val = OBSTACK_OBJECT_SIZE(st->pool);
+  p = OBSTACK_FINISH(st->pool);
+
+  snptr->val = realloc(snptr->val, snptr->size_val);
+  if (!snptr->val) {
+    OBSTACK_FREE(st->pool, p);
+    return -1;
+  }
+  memcpy(snptr->val, p, snptr->size_val);
 
   snptr->valid = 1;
 
@@ -746,21 +802,22 @@ symtable_dump(symtable_t *p)
   printf("  frame: size(%u)\n", p->size_frame);
 
   for (i = 0; i <= p->depth; i++)
-    printf("    [%d]: base(%p), link(%p) name(%s)\n", i,
+    printf("    %2d: base(%p), link(%p) name(%s)\n", i,
            p->frame[i].base, p->frame[i].link, p->frame[i].name);
 
   printf("  table: size(%u)\n", p->size_table);
   for (i = 0; i < p->size_table; i++) {
+    printf("    %2d: ", i);
     node = p->table[i];
     if (node) {
-      printf("    [%d:%s]", node->frame, node->name);
+      printf("[%d:%c:%s]", node->frame, node->valid? 'V' : 'D', node->name);
       node = node->next;
     }
     else
-      printf("    [NIL]");
+      printf("NIL");
 
     for (; node != NULL; node = node->next) {
-      printf("->[%d:%s]", node->frame, node->name);
+      printf("->[%d:%c:%s]", node->frame, node->valid? 'V' : 'D', node->name);
     }
     putchar('\n');
   }

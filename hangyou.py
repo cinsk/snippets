@@ -679,7 +679,7 @@ def answer_board(word, char_dict = None):
 
     result = ""
     for ch in word:
-        if char_dict.has_key(ch):
+        if char_dict.has_key(ch.upper()):
             result += "%c " % ch.upper()
         else:
             result += "_ "
@@ -788,19 +788,20 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
             char = chr(ch)
             #stdscr.addstr(1, 0, "ch = %c" % char)
 
-            if answers.has_key(char):
+            if answers.has_key(char.upper()):
                 message(msgwin, False,
                         "You already tried '%c'. Try another." % char.upper())
                 scrwin.move(0, curses.COLS - 1)
                 scrwin.refresh()
                 continue
 
-            answers[char] = True
+            answers[char.upper()] = True
             draw_answer_board(boawin, word, answers)
             
             if char in wordset:
                 if chance(MSG_CHANCE_GAINING):
                     message(msgwin, False, random_msg(gbl_msg_gaining))
+                message(msgwin, False, "Char: %s, word: %s" % (repr(char), word))
                 gbl_score += 1
             else:
                 if gbl_lives == 1 and chance(MSG_CHANCE_DYING):

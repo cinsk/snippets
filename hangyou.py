@@ -808,7 +808,6 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
             if char in wordset:
                 if chance(MSG_CHANCE_GAINING):
                     message(msgwin, False, random_msg(gbl_msg_gaining))
-                message(msgwin, False, "Char: %s, word: %s" % (repr(char), word))
                 gbl_score += 1
             else:
                 if gbl_lives == 1 and chance(MSG_CHANCE_DYING):

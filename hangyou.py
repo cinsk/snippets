@@ -820,6 +820,7 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
                     message(msgwin, False, random_msg(gbl_msg_gaining))
                 gbl_score += 1
             else:
+                register_review(word)
                 if gbl_lives == 1 and chance(MSG_CHANCE_DYING):
                     message(msgwin, False, random_msg(gbl_msg_dying))
                 elif chance(MSG_CHANCE_LOSING):

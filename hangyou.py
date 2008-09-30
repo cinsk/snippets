@@ -927,13 +927,15 @@ def main():
             
     curses.endwin()
 
-    print "You solved %d question(s) and got %d scores." \
+    print "You solved %d question(s) and got %d scores in your lifetime." \
           % (gbl_solved, gbl_score)
 
     if len(gbl_review) > 0:
-        print "From your history, you may not know these words:"
+        print "From your history, you may not know these words:\n"
         for k, v in gbl_review.iteritems():
-            print "\t%s (%d)" % (k, v)
+            print " %s (%d) http://eedic.naver.com/search.naver?query=%s" % \
+                  (k, v, k.lower())
+    print ""
     return
 
     words = get_today_words()

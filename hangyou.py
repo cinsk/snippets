@@ -785,12 +785,12 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
 
         char = None
         if curses.ascii.isalpha(ch):
-            char = chr(ch).upper()
+            char = chr(ch)
             #stdscr.addstr(1, 0, "ch = %c" % char)
 
             if answers.has_key(char):
                 message(msgwin, False,
-                        "You already tried '%c'. Try another." % char)
+                        "You already tried '%c'. Try another." % char.upper())
                 scrwin.move(0, curses.COLS - 1)
                 scrwin.refresh()
                 continue

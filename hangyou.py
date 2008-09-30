@@ -848,6 +848,8 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
             if ret == 'y':
                 gbl_score = 0
                 gbl_lives = TRY_COUNT
+                gbl_hints = HINT_COUNT
+                gbl_solved = 0
                 return True
             else:
                 return False
@@ -928,7 +930,6 @@ def main():
             
 
 if __name__ == '__main__':
-    main()
     try:
         main()
     except Exception, e:

@@ -44,6 +44,8 @@ gbl_lives = TRY_COUNT
 gbl_hints = HINT_COUNT
 gbl_solved = 0
 
+gbl_review = dict()
+
 MSG_CHANCE_GAINING = 0.3
 MSG_CHANCE_LOSING = 0.5
 MSG_CHANCE_DYING = 0.7
@@ -759,6 +761,14 @@ def draw_answer_board(screen, word, char_dict = None):
     screen.refresh()
     
 
+def register_review(word):
+    global gbl_review
+
+    if gbl_review.has_key(word):
+        gbl_review[word] += 1
+    else:
+        gbl_review[word] = 1
+        
 def game(msgwin, boawin, defwin, scrwin, word, desc):
     global banner_shown, gbl_score, gbl_lives
     global gbl_msg_gaining, gbl_msg_dying, gbl_msg_losing
@@ -821,6 +831,7 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
             #print "ch: ", ch
             #print "WORDSET: ", wordset
             #print "ANSWER: ", answers
+            register_review(word)
             if gbl_hints > 0:
                 message(msgwin, False,
                         random_msg(gbl_msg_hint) % \
@@ -842,6 +853,7 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
                 return False
 
         if gbl_lives <= 0:
+            register_review(word)
             draw_answer_board(boawin, word)
             ret = ask(msgwin, "yn", random_msg(gbl_msg_died),
                       "Play more? (y/n) ")
@@ -870,7 +882,7 @@ def show_copyright(win):
     win.refresh()
         
 def main():
-    global msgwin, boawin, scrwin, defwin, gbl_solved, gbl_score
+    global msgwin, boawin, scrwin, defwin, gbl_solved, gbl_score, gbl_review
     global COLS, LINES
     stdscr = curses.initscr()
 
@@ -917,6 +929,11 @@ def main():
 
     print "You solved %d question(s) and got %d scores." \
           % (gbl_solved, gbl_score)
+
+    if len(gbl_review) > 0:
+        print "From your history, you may not know these words:"
+        for k, v in gbl_review.iteritems():
+            print "\t%s (%d)" % (k, v)
     return
 
     words = get_today_words()

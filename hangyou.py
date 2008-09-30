@@ -587,14 +587,14 @@ def get_defs_old(url):
     return defs
 
 def get_wrong_char(wordset, answer):
-    for ch in "abcdefghijklmnopqrstuvwxyz":
+    for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
         if answer.has_key(ch) or ch in wordset:
             continue
         return ch.upper()
     return None
 
 def get_right_char(wordset, answer):
-    for ch in "abcdefghijklmnopqrstuvwxyz":
+    for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
         if answer.has_key(ch) or not ch in wordset:
             continue
         return ch.upper()
@@ -621,6 +621,12 @@ def get_today_words():
     fd.close()
     return words
 
+def str_partition(s, sep):
+    idx = s.find(sep)
+    if idx < 0:
+        return (s, '', '')
+    return (s[0:idx], s[idx], s[idx+1:])
+            
 def make_desc_list(desc):
     re_delim = re.compile("[^a-zA-Z]+")
     lst = list()
@@ -631,7 +637,7 @@ def make_desc_list(desc):
                 lst.append(desc)
             break
 
-        tok, sep, last = desc.partition(match.group())
+        tok, sep, last = str_partition(desc, match.group())
         if (len(tok) > 0):
             lst.append(tok)
             
@@ -640,7 +646,7 @@ def make_desc_list(desc):
             if sep.find(".") < 0 and len(sep) > 0:
                 lst.append(sep)
             else:
-                for tok in sep.partition("."):
+                for tok in str_partition(sep, "."):
                     if len(tok) > 0:
                         lst.append(tok)
         desc = last
@@ -762,6 +768,7 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
     answers = dict()
     trycount = 0
 
+    word = word.upper()
     wordset = set(word)
 
     wdef = make_quiz(word, desc)
@@ -785,17 +792,17 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
 
         char = None
         if curses.ascii.isalpha(ch):
-            char = chr(ch)
+            char = chr(ch).upper()
             #stdscr.addstr(1, 0, "ch = %c" % char)
 
-            if answers.has_key(char.upper()):
+            if answers.has_key(char):
                 message(msgwin, False,
-                        "You already tried '%c'. Try another." % char.upper())
+                        "You already tried '%c'. Try another." % char)
                 scrwin.move(0, curses.COLS - 1)
                 scrwin.refresh()
                 continue
 
-            answers[char.upper()] = True
+            answers[char] = True
             draw_answer_board(boawin, word, answers)
             
             if char in wordset:
@@ -812,6 +819,9 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
                 
             draw_score_board(scrwin)
         elif curses.ascii.isascii(ch) and chr(ch) == '?':
+            #print "ch: ", ch
+            #print "WORDSET: ", wordset
+            #print "ANSWER: ", answers
             if gbl_hints > 0:
                 message(msgwin, False,
                         random_msg(gbl_msg_hint) % \
@@ -918,6 +928,7 @@ def main():
             
 
 if __name__ == '__main__':
+    main()
     try:
         main()
     except Exception, e:

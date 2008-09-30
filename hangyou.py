@@ -658,7 +658,7 @@ def make_quiz(word, desc):
 
     stemmer = PorterStemmer()
 
-    stem = stemmer.stem(word)
+    stem = stemmer.stem(word.lower())
 
     quiz = ""
     for w in make_desc_list(desc):
@@ -900,7 +900,8 @@ def main():
         while True:
             # Currently, multi-word dictionary entry is not supported.
             # Thus, loop until one-word dictionary entry is found
-            wid = random.randint(0, WORD_ID_MAX)
+            #wid = random.randint(0, WORD_ID_MAX)
+            wid = 29052
             wdef = get_word(wid)
             if wdef != None and len(make_desc_list(wdef[0])) == 1:
                 #print wid, wdef

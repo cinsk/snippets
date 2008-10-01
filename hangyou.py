@@ -62,8 +62,8 @@ gbl_review = dict()
 pre_word_lst = list()
 
 MSG_CHANCE_GAINING = 0.3
-MSG_CHANCE_LOSING = 0.5
-MSG_CHANCE_DYING = 0.7
+MSG_CHANCE_LOSING = 0.4
+MSG_CHANCE_DYING = 0.6
 
 COLS = 80
 LINES = 24
@@ -75,11 +75,27 @@ scrwin = None
 
 banner_shown = False
 
+#
+# Note:
+#   - Dialog from the evil enclosed with "..."
+#   - Dialog from the angel enclosed with <...>
+#
+
 gbl_msg_survived = [
     "You survived. \"Damn! I should've prepared tougher question.\"",
     "You survived. \"We'll see. I don't think you're that smart.\"",
     "\"This time, I'll let you free, mortal.\" You survived.",
     "\"A thousand curses upon thee~~.\" You survivied.",
+    "You survived.",
+    "You extend your life.",
+    "You breathe deeply.",
+    "The tension is relieved",
+    "<Thou art freed.>",
+    "<I heard thy pray.>",
+    "<I bless thee.>",
+    "<Thy achivement shalt be unforgottable!>",
+    "<Thou art worthy of my presence.>",
+    "<The evil's hands no longer touch thee.>",
     "\"You bored me, leave me.\" You survived." ]
 
 gbl_msg_died = [
@@ -90,6 +106,8 @@ gbl_msg_died = [
     "Your body disintegrated.  You died.",
     "Your soul is scorched.  You died.",
     "Your body petrified.  You died.",
+    "You feel the presence of Spenta Mainyu.",
+    "You feel the presence Angra Mainyu.",
     "\"Now, I'm tasting your soul.\"  You died.",
     ]
 
@@ -100,6 +118,8 @@ gbl_msg_dying = [
     "\"Life down there is not boring, you know.\"",
     "\"It's too late.  Accept what I offered.\"",
     "\"Join me, or die.\"",
+    "<Thou shalt not give up.>",
+    "<Thine call are heared.>",
     "\"No one can save you except me now.\"",
     ]
 
@@ -125,6 +145,7 @@ gbl_msg_losing = [
     "\"Thou hast to know this, thou art too stupid to becoming my minion\"",
     "\"Thy fingers are hunger for my attention.\"",
     "\"Nice try.\"",
+    "<Thou shalt endure thyself.>",
     "\"What about 'X'?\"",
     "\"What about 'Q'?\"",
     "\"What about 'Z'?\"",
@@ -144,17 +165,19 @@ gbl_msg_gaining = [
     "\"You dare!\"",
     "\"Insolent!\"",
     "\"Ungrateful!\"",
+    "<Asgard is not far from here.>",
+    "<Odin himself will listen thy call.>",
     "\"What about 'X'?\"",
     "\"What about 'Q'?\"",
     "\"What about 'Z'?\"",
     ]
     
 gbl_msg_excel = [
-    "Excellent!",
-    "Astounding!",
-    "Awesome!",
-    "Wonderful!",
-    "Terrific!",
+    "<Excellent!!!>",
+    "<Astounding!!!>",
+    "<Awesome!!!>",
+    "<Wonderful!!!>",
+    "<Terrific!!!>",
     ]
                      
 class PorterStemmer:

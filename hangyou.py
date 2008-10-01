@@ -24,6 +24,7 @@ URL_WORDS_TODAY = "http://eedic.naver.com/"
 TRY_COUNT = 20
 HINT_COUNT = 5
 WORD_ID_MAX = 32613
+WORD_ID_MAX_KO = 1307390
 
 trans_table = """\
 \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
@@ -43,13 +44,17 @@ trans_table = """\
 \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\
 \x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20\x20"""
 
-LEV_EASIEST, LEV_EASY, LEV_MEDIUM, LEV_HARD, LEV_TOUGH, LEV_MASTER = range(6)
+LEV_EASIEST, LEV_EASY, LEV_MEDIUM, \
+             LEV_HARD, LEV_TOUGH, LEV_MASTER, LEV_RANDOM = range(7)
 
 gbl_score = 0
 gbl_lives = TRY_COUNT
 gbl_hints = HINT_COUNT
 gbl_solved = 0
-gbl_level = LEV_MEDIUM
+gbl_level = LEV_TOUGH
+
+gbl_level_strings = [
+    "easiest", "easy", "medium", "hard", "tough", "master", "random" ]
 
 gbl_review = dict()
 
@@ -2010,7 +2015,7 @@ def get_word(word_id):
     """Return (WORD DEF) for given WORD_ID"""
 
     # Normalize WORD_ID
-    word_id = (word_id + WORD_ID_MAX) % WORD_ID_MAX
+    word_id = (word_id + WORD_ID_MAX + 1) % (WORD_ID_MAX + 1)
     url = "http://eedic.naver.com/eedic.naver?id=%u" % word_id
     
     re_def = re.compile("(^[0-9][0-9]*\..*$|^[ ]*[A-Z-]+[ ]*)")
@@ -2090,6 +2095,63 @@ def get_defs_old(url):
         
     return defs
 
+
+def get_word_ko(word_id):
+    """Return (WORD DEF) for given WORD_ID"""
+
+    # Normalize WORD_ID
+    word_id = (word_id + WORD_ID_MAX_KO + 1) % (WORD_ID_MAX_KO + 1)
+    url = "http://endic.naver.com/endic.nhn?docid=%u" % word_id
+    #print "URL", url
+    re_def = re.compile("(^[0-9][0-9]*.*$|^[ \t]*[A-Z-]+.*)")
+    re_word = re.compile(u"""<span id="entry">([^<]*)</span>""")
+    
+    line = None
+    word = None
+    
+    fd = urllib.urlopen(url)
+    while True:
+        line = fd.readline().decode("cp949")
+        if len(line) == 0:
+            break
+        if line.find("""<span id="entry">""") >= 0:
+            #print "!", line
+            match = re_word.search(line)
+            if match != None:
+                word = match.group(1)
+            break
+
+    #print "WORD:", word
+    while True:
+        line = fd.readline()
+        if len(line) == 0:
+            #print "!"
+            break
+        if line.find("""<div id="content">""") < 0:
+            continue
+        line = fd.readline().decode("cp949")
+        break
+    if line == None:
+        return None
+    buf = html_detag(line)
+    lines = buf.split("\n")
+    
+    defs = list()
+    idx = 0
+
+    while idx < len(lines):
+        match = re_def.match(lines[idx])
+        if match != None:
+            #print "MATCH: %s" % match.group()
+            d = lines[idx + 1].strip() 
+            if d != "":
+                defs.append(d)
+        idx += 1
+
+    if len(defs) == 0:
+        return (word, "No hint for now~")
+
+    return (word, defs[random.randint(0, len(defs) - 1)])
 
 def get_wrong_char(wordset, answer):
     for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
@@ -2250,11 +2312,12 @@ def ask(screen, answer, *msgs):
 
 
 def draw_score_board(screen):
-    global gbl_lives, gbl_score, gbl_hints
+    global gbl_lives, gbl_score, gbl_hints, gbl_level, gbl_level_strings
     
     screen.erase()
-    screen.addstr(0, 0, "HP: %d\tScore: %d\tChances: %d" % \
-                  (gbl_lives, gbl_score, gbl_hints))
+    screen.addstr(0, 0, "HP: %d\tScore: %d\tChances: %d\t\tLevel: %s" % \
+                  (gbl_lives, gbl_score, gbl_hints, \
+                   gbl_level_strings[gbl_level]))
     screen.refresh()
     
 def draw_answer_board(screen, word, char_dict = None):
@@ -2277,16 +2340,49 @@ def draw_answer_board(screen, word, char_dict = None):
     screen.refresh()
     
 
-def register_review(word):
+def register_review(word, wid):
     global gbl_review
 
-    if gbl_review.has_key(word):
-        gbl_review[word] += 1
+    if gbl_review.has_key(wid):
+        w, t = gbl_review[wid]
+        gbl_review[wid] = (w, t + 1)
     else:
-        gbl_review[word] = 1
+        gbl_review[wid] = (word, 1)
 
+def print_review_entry(word, tried, url, cols):
+    cols -= 44                          # Assumed length of URLs
+    tried = "(%d)" % tried
+
+    ndots = max(0, cols - (1 + len(word) + 1 + len(tried) + 4))
+    print " %s %s  %s  %s" % (word, tried, "." * ndots, url)
+    
+
+def print_review(columns = 80):
+    global gbl_review
+
+    wlist = list()
+
+    if len(gbl_review) <= 0:
+        return
+
+    print "From your history, you may not know these words:\n"
+    
+    for k, v in gbl_review.iteritems():
+        wlist.append((k, v[0], v[1]))
+
+    wlist.sort(lambda x, y: cmp(x[2], y[2]))
+
+    for i in wlist:
+        # i[0] = word_id
+        # i[1] = word
+        # i[2] = tried
+        print_review_entry(i[1], i[2],
+                           "http://eedic.naver.com/eedic.naver?id=%d" % i[0],
+                           columns)
+    print ""
+    
 
-def game(msgwin, boawin, defwin, scrwin, word, desc):
+def game(msgwin, boawin, defwin, scrwin, word, word_id, desc):
     global banner_shown, gbl_score, gbl_lives
     global gbl_msg_gaining, gbl_msg_dying, gbl_msg_losing
     global gbl_msg_died, gbl_msg_survived, gbl_msg_hint
@@ -2337,7 +2433,7 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
                     message(msgwin, False, random_msg(gbl_msg_gaining))
                 gbl_score += 1
             else:
-                register_review(word)
+                register_review(word, word_id)
                 if gbl_lives == 1 and chance(MSG_CHANCE_DYING):
                     message(msgwin, False, random_msg(gbl_msg_dying))
                 elif chance(MSG_CHANCE_LOSING):
@@ -2349,7 +2445,7 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
             #print "ch: ", ch
             #print "WORDSET: ", wordset
             #print "ANSWER: ", answers
-            register_review(word)
+            register_review(word, word_id)
             if gbl_hints > 0:
                 message(msgwin, False,
                         random_msg(gbl_msg_hint) % \
@@ -2372,7 +2468,7 @@ def game(msgwin, boawin, defwin, scrwin, word, desc):
                 return False
 
         if gbl_lives <= 0:
-            register_review(word)
+            register_review(word, word_id)
             draw_answer_board(boawin, word)
             ret = ask(msgwin, "yn", random_msg(gbl_msg_died),
                       "Play more? (y/n) ")
@@ -2416,6 +2512,10 @@ def select_word():
     global gbl_level, ewords
 
     word = None
+
+    if gbl_level == LEV_RANDOM:
+        return random.randint(1, WORD_ID_MAX)
+    
     while True:
         for lev in range(gbl_level, -1, -1):
             if random.randint(0, 99) < 33:
@@ -2434,7 +2534,10 @@ HangYou: Classic hangman-like English Word Game
 usage: %s [OPTION...]
 
   -l, --level=LEV     Set the default level to LEV (0-5)
-                      (0: Easiest - 5: Master)
+                        0: Easiest      1: Easy
+                        2: Medium       3: Hard
+                        4: Tough        5: Master
+                        6: Random (Any dictionary word)
 
   --help              show this help messages and exit
   --version           show version string and exit
@@ -2454,6 +2557,7 @@ def version_string():
         s = "HangYou revision ALPHA"
     return s
 
+
 def main():
     global gbl_level
     
@@ -2479,9 +2583,9 @@ def main():
             sys.exit(0)
         elif o in ("--level", "-l"):
             try:
-                gbl_level = (int(a) + LEV_MASTER + 1) % (LEV_MASTER + 1)
+                gbl_level = min(max(int(a), LEV_EASIEST), LEV_RANDOM)
             except ValueError:
-                gbl_level = LEV_MEDIUM
+                gbl_level = LEV_TOUGH
         elif o in ("--debug-word"):
             try:
                 pre_word_list.append(int(a))
@@ -2555,7 +2659,7 @@ def inner_main():
                 break
         message(msgwin, False)
             
-        if not game(msgwin, boawin, defwin, scrwin, wdef[0], wdef[1]):
+        if not game(msgwin, boawin, defwin, scrwin, wdef[0], wid, wdef[1]):
             break
             
     curses.endwin()
@@ -2563,12 +2667,7 @@ def inner_main():
     print "You solved %d question(s) and got %d scores in your lifetime." \
           % (gbl_solved, gbl_score)
 
-    if len(gbl_review) > 0:
-        print "From your history, you may not know these words:\n"
-        for k, v in gbl_review.iteritems():
-            print " %s (%d) http://eedic.naver.com/search.naver?%s" % \
-                  (k, v, urllib.urlencode({"query" : k.lower()}))
-    print ""
+    print_review()
     return
 
     words = get_today_words()

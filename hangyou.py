@@ -149,7 +149,13 @@ gbl_msg_gaining = [
     "\"What about 'Z'?\"",
     ]
     
-                 
+gbl_msg_excel = [
+    "Excellent!",
+    "Astounding!",
+    "Awesome!",
+    "Wonderful!",
+    "Terrific!",
+    ]
                      
 class PorterStemmer:
     """Porter Stemming Algorithm
@@ -2385,7 +2391,7 @@ def print_review(columns = 80):
 def game(msgwin, boawin, defwin, scrwin, word, word_id, desc):
     global banner_shown, gbl_score, gbl_lives
     global gbl_msg_gaining, gbl_msg_dying, gbl_msg_losing
-    global gbl_msg_died, gbl_msg_survived, gbl_msg_hint
+    global gbl_msg_died, gbl_msg_survived, gbl_msg_hint, gbl_msg_excel
     global gbl_solved, gbl_hints
     
     answers = dict()
@@ -2457,11 +2463,17 @@ def game(msgwin, boawin, defwin, scrwin, word, word_id, desc):
             message(msgwin, False, "Only alphabet keys are allowed")
 
         if correct_answer(word, answers):
+            #print "ANSWER: %d, LEN: %d" % (len(answers), len(word))
+            if len(answers) <= len(word):
+                msg = random_msg(gbl_msg_excel)
+                gbl_hints += 5
+                gbl_lives *= 2
+            else:
+                msg = random_msg(gbl_msg_survived)
+                gbl_hints += 1
+                gbl_lives += max(1, len(word) / 2)
             gbl_solved += 1
-            gbl_hints += 1
-            gbl_lives += max(1, len(word) / 2)
-            ret = ask(msgwin, "yn", random_msg(gbl_msg_survived),
-                      "Play more? (y/n) ")
+            ret = ask(msgwin, "yn", msg, "Play more? (y/n) ")
             if ret == 'y':
                 return True
             else:
@@ -2588,7 +2600,7 @@ def main():
                 gbl_level = LEV_TOUGH
         elif o in ("--debug-word"):
             try:
-                pre_word_list.append(int(a))
+                pre_word_lst.append(int(a))
             except ValueError:
                 pass
             

@@ -96,8 +96,9 @@ extern void obstack_grow0_(struct obstack *stack,
 extern void obstack_1grow_(struct obstack *stack, char data,
                            void *(*realloc_func)(void *, size_t));
 
-#define obstack_ptr_grow(s, d)  obstack_grow((s), (d), sizeof(d))
-#define obstack_int_grow(s, d)  obstack_grow((s), &(d), sizeof(d))
+extern void obstack_ptr_grow(struct obstack *s, void *data);
+extern void obstack_int_grow(struct obstack *s, int data);
+
 #define obstack_begin(s, z)     obstack_init((s))
 
 

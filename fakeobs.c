@@ -5,6 +5,11 @@
  */
 #include <stdlib.h>
 #include <string.h>
+
+#include <errno.h>
+#include <unistd.h>
+#include <sys/mman.h>
+
 #include "fakeobs.h"
 
 #define DEF_MAX_PTRS    32
@@ -242,6 +247,21 @@ obstack_1grow_(struct obstack *stack, char data,
 
 
 void
+obstack_ptr_grow(struct obstack *s, void *data)
+{
+  void *val = data;
+  obstack_grow(s, &val, sizeof(val));
+}
+
+void
+obstack_int_grow(struct obstack *s, int data)
+{
+  int val = data;
+  obstack_grow(s, &val, sizeof(val));
+}
+
+
+void
 obstack_ptr_grow_fast(struct obstack *stack, void *data)
 {
   abort();
@@ -265,6 +285,19 @@ obstack_blank_fast(struct obstack *stack, int size)
 void
 obstack_1grow_fast(struct obstack *stack, char c)
 {
+  abort();
+}
+
+
+static int
+ismapped(void *ptr)
+{
+  unsigned char vec;
+
+  if (mincore(ptr, 1, &vec) == 0)
+    return 1;
+  else if (errno == ENOMEM)
+    return 0;
   abort();
 }
 

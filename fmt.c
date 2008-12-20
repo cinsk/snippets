@@ -26,8 +26,12 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
-#include <obstack.h>
-//#include "fakeobs.h"
+
+#ifndef DEBUG_OBSTACK
+# include <obstack.h>
+#else
+# include "fakeobs.h"
+#endif  /* DEBUG_OBSTACK */
 
 #include <error.h>
 #include <ctype.h>
@@ -256,6 +260,7 @@ static void put_line (fmt_t *f, WORD *w, int indent);
 static void put_word (fmt_t *f, WORD *w);
 static void put_space (fmt_t *f, int space);
 static void set_other_indent (fmt_t *fmt, int same_paragraph);
+static void fmt_reset(fmt_t *f);
 
 #if 0
 /* The name this program was run with.  */
@@ -482,17 +487,17 @@ With no FILE, or when FILE is -, read standard input.\n"),
 /* Decode options and launch execution.  */
 
 static const struct option long_options[] =
-{
-  {"crown-margin", no_argument, NULL, 'c'},
-  {"prefix", required_argument, NULL, 'p'},
-  {"split-only", no_argument, NULL, 's'},
-  {"tagged-paragraph", no_argument, NULL, 't'},
-  {"uniform-spacing", no_argument, NULL, 'u'},
-  {"width", required_argument, NULL, 'w'},
-  //{GETOPT_HELP_OPTION_DECL},
-  //{GETOPT_VERSION_OPTION_DECL},
-  {NULL, 0, NULL, 0},
-};
+  {
+    {"crown-margin", no_argument, NULL, 'c'},
+    {"prefix", required_argument, NULL, 'p'},
+    {"split-only", no_argument, NULL, 's'},
+    {"tagged-paragraph", no_argument, NULL, 't'},
+    {"uniform-spacing", no_argument, NULL, 'u'},
+    {"width", required_argument, NULL, 'w'},
+    //{GETOPT_HELP_OPTION_DECL},
+    //{GETOPT_VERSION_OPTION_DECL},
+    {NULL, 0, NULL, 0},
+  };
 #endif  /* 0 */
 
 
@@ -521,6 +526,7 @@ set_prefix (fmt_t *fmt, char *p)
 
 /* read file F and send formatted output to stdout.  */
 
+
 char **
 fmt_vectorize(fmt_t *f)
 {
@@ -530,6 +536,9 @@ fmt_vectorize(fmt_t *f)
   size_t size;
 
   assert(obstack_object_size(f->pool) == 0);
+
+  if (!f->output)
+    return NULL;
 
   for (p = q = f->output; *p != '\0'; p++) {
     if (*p == '\n') {
@@ -547,20 +556,18 @@ fmt_vectorize(fmt_t *f)
   obstack_ptr_grow(f->pool, NULL);
 
   if (f->flags & FF_MALLOC) {
+    char **v;
+    int i;
+
     size = obstack_object_size(f->pool);
     vp = malloc(size + p - f->output + 1);
     memcpy(vp, obstack_finish(f->pool), size);
     memcpy(vp + size, f->output, p - f->output + 1);
 
-    {
-      char **p;
-      for (p = vp; *p != NULL; p++) {
-        *p = (int)*p + (char *)vp + size;
-      }
+    v = vp;
+    for (i = 0; i < size / sizeof(void *) - 1; i++) {
+      v[i] = (int)v[i] + (char *)vp + size;
     }
-
-    obstack_free(f->pool, f->dummy);
-    f->dummy = f->input = f->output = NULL;
   }
   else
     vp = obstack_finish(f->pool);
@@ -569,8 +576,8 @@ fmt_vectorize(fmt_t *f)
 }
 
 
-char **
-fmt_format (fmt_t *f, const char *s)
+static void
+fmt_reset(fmt_t *f)
 {
   f->tabs = FALSE;
   f->other_indent = 0;
@@ -596,6 +603,17 @@ fmt_format (fmt_t *f, const char *s)
     f->next_prefix_indent = 0;
     f->last_line_length = 0;
   }
+  f->dummy = f->input = NULL;
+}
+
+
+char *
+fmt_format (fmt_t *f, const char *s)
+{
+  fmt_reset(f);
+
+  if (!s)
+    return NULL;
 
   f->dummy = obstack_alloc(f->pool, 1);
   f->input = obstack_copy0(f->pool, s, strlen(s));
@@ -609,7 +627,7 @@ fmt_format (fmt_t *f, const char *s)
   obstack_1grow(f->pool, '\0');
   f->output = obstack_finish(f->pool);
 
-  return fmt_vectorize(f);
+  return f->output;
 }
 
 /* Set the global variable `other_indent' according to SAME_PARAGRAPH
@@ -821,8 +839,8 @@ get_line (fmt_t *f, int c)
       c = get_space (f, c);
       f->word_limit->space = f->in_column - start;
       f->word_limit->final = (c == '\0'
-                           || (f->word_limit->period
-                               && (c == '\n' || f->word_limit->space > 1)));
+                              || (f->word_limit->period
+                                  && (c == '\n' || f->word_limit->space > 1)));
       if (c == '\n' || c == '\0' || f->uniform)
         f->word_limit->space = f->word_limit->final ? 2 : 1;
       if (f->word_limit == end_of_word)
@@ -1171,7 +1189,7 @@ put_space (fmt_t *f, int space)
 }
 
 
-#if 0
+#ifdef TEST_FMT
 #define BUFSIZE 128
 
 int
@@ -1180,11 +1198,12 @@ main(int argc, char *argv[])
   int fd;
   int i;
   char buf[BUFSIZE + 1];
-  char **s;
+  char *s;
   int ch;
+  int flags = FF_MALLOC;
 
   fmt_t *fmt;
-  fmt = fmt_new(FF_MALLOC);
+  fmt = fmt_new(flags);
 
   for (i = 1; i < argc; i++) {
     fd = open(argv[i], O_RDONLY);
@@ -1192,24 +1211,34 @@ main(int argc, char *argv[])
       continue;
     while ((ch = read(fd, buf, BUFSIZE)) > 0) {
       buf[ch] = '\0';
-      fprintf(stderr, "ch = %d\n", ch);
 #if 1
       printf("==[BUF]==\n");
       printf("%s\n", buf);
       printf("--[FMT]--\n");
 #endif  /* 0 */
       s = fmt_format(fmt, buf);
+      printf("%s", s);
+      printf("--[FMT VEC]--\n");
 
-      while (*s != NULL) {
-        printf("%s\n", *s);
-        s++;
+      {
+        char **vp, **old;
+        old = vp = fmt_vectorize(fmt);
+
+        if (vp) {
+          while (*vp != NULL) {
+            printf("%s\n", *vp);
+            vp++;
+          }
+        }
+        if (flags & FF_MALLOC)
+          free(old);
       }
       printf("\n");
-      free(s);
+      fmt_reset(fmt);
     }
     close(fd);
   }
   fmt_delete(fmt);
   return 0;
 }
-#endif  /* 0 */
+#endif  /* TEST_FMT */

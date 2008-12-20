@@ -33,9 +33,53 @@
 struct fmt_;
 typedef struct fmt_ fmt_t;
 
+/*
+ * Create FMT_T struct for the simple text formatting.
+ *
+ * FLAGS - one or more FF_* macros
+ *
+ * fmt_new() returns a pointer to new FMT_T struct on success,
+ * otherwise it returns NULL.
+ */
 extern fmt_t *fmt_new(unsigned flags);
+
+/*
+ * Deallocate all resources occupied by FMT.
+ *
+ * Note that string vectors returned by fmt_vectorize() are not freed
+ * automatically if FF_MALLOC was used.
+ */
 extern void fmt_delete(fmt_t *fmt);
+
+/*
+ * Set the maximum line width.
+ */
 extern void fmt_set_width(fmt_t *p, int width);
-extern char **fmt_format (fmt_t *f, const char *s);
+
+/*
+ * Format the string S so that it fits in the maximum width.
+ *
+ * fmt_format() returns a pointer to the formatted string.  The
+ * returned string is valid until next call to fmt_format().  You can
+ * force fmt_format() to deallocate the previous returned string by
+ * passing NULL in S if any.
+ *
+ * Note that if S is NULL, and FF_MALLOC was not set, any returned
+ * value of previously obtained by fmt_vectoroize() also freeed.
+ */
+extern char *fmt_format (fmt_t *f, const char *s);
+
+/*
+ * Make an array of pointers to strings from the string obtained
+ * by previous call to fmt_format().
+ *
+ * If FF_MALLOC has been used, the returned value and the string are
+ * allocated by malloc().  In this case, calling fmt_format() with
+ * NULL on its second argument does not affect the returned value.
+ *
+ * If FF_MALLOC was not set, the returned value is also freed on
+ * next call of fmt_format().
+ */
+char **fmt_vectorize(fmt_t *f);
 
 #endif  /* fmt_h__ */

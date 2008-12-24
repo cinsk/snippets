@@ -23,12 +23,16 @@
 
 /* Flags for fmt_new()
  *
- * FF_MALLOC -- If provided, the return value and the strings from
- *              fmt_format() are allocated using malloc().  Otherwise,
- *              the memory is handled by fmt_format(); The previous
- *              memory is automatically freed by fmt_format().
+ * FF_MALLOC_STR -- If provided, strings returned by fmt_vectorize()
+ *                  will be allocated by malloc().  Otherwise, strings
+ *                  are allocated from the obstack.
+ *
+ * FF_MALLOC_VEC -- If provided, the return value of fmt_vectorize()
+ *                  will be allocated by malloc().  Otherwise, the
+ *                  vector is allocated from the obstack.
  */
-#define FF_MALLOC       0x01
+#define FF_MALLOC_STR   0x01
+#define FF_MALLOC_VEC   0x02
 
 struct fmt_;
 typedef struct fmt_ fmt_t;
@@ -64,8 +68,8 @@ extern void fmt_set_width(fmt_t *p, int width);
  * force fmt_format() to deallocate the previous returned string by
  * passing NULL in S if any.
  *
- * Note that if S is NULL, and FF_MALLOC was not set, any returned
- * value of previously obtained by fmt_vectoroize() also freeed.
+ * Note that if S is NULL, any resources allocated by fmt_vectorize()
+ * from the obstack are freed.
  */
 extern char *fmt_format (fmt_t *f, const char *s);
 
@@ -73,12 +77,11 @@ extern char *fmt_format (fmt_t *f, const char *s);
  * Make an array of pointers to strings from the string obtained
  * by previous call to fmt_format().
  *
- * If FF_MALLOC has been used, the returned value and the string are
- * allocated by malloc().  In this case, calling fmt_format() with
- * NULL on its second argument does not affect the returned value.
+ * Memory used by fmt_vectorize() will be governed by FLAGS provided
+ * in fmt_new().
  *
- * If FF_MALLOC was not set, the returned value is also freed on
- * next call of fmt_format().
+ * Note that any resources that is not allocated by malloc() in this
+ * function will be freed on next call of fmt_format().
  */
 char **fmt_vectorize(fmt_t *f);
 

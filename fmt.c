@@ -531,7 +531,7 @@ char **
 fmt_vectorize(fmt_t *f)
 {
   register char *p;
-  char *q;
+  char *q, *r;
   void *vp;
   size_t size;
 
@@ -544,17 +544,53 @@ fmt_vectorize(fmt_t *f)
     if (*p == '\n') {
       *p = '\0';
 
+      if (f->flags & FF_MALLOC_STR) {
+        r = strdup(q);
+        if (!r) {
+          /* TODO: deallocate all PTR in OBSTACK */
+          return NULL;
+        }
+      }
+      else
+        r = q;
+
+      obstack_ptr_grow(f->pool, r);
+      q = p + 1;
+
+#if 0
       if (f->flags & FF_MALLOC)
         obstack_ptr_grow(f->pool, (void *)(q - f->output));
       else
         obstack_ptr_grow(f->pool, q);
       q = p + 1;
+#endif  /* 0 */
     }
   }
-  if (p != q)
+  if (p != q) {
+    if (f->flags & FF_MALLOC_STR) {
+      q = strdup(q);
+      if (!q) {
+        /* TODO: deallocate all PTR in OBSTACK */
+        return NULL;
+      }
+    }
     obstack_ptr_grow(f->pool, q);
+  }
   obstack_ptr_grow(f->pool, NULL);
 
+  if (f->flags & FF_MALLOC_VEC) {
+    size = obstack_object_size(f->pool);
+    vp = malloc(size);
+    if (!vp) {
+      /* TODO: deallocate all PTR in OBSTACK */
+    }
+    memcpy(vp, obstack_base(f->pool), size);
+    obstack_free(f->pool, obstack_finish(f->pool));
+  }
+  else
+    vp = obstack_finish(f->pool);
+
+#if 0
   if (f->flags & FF_MALLOC) {
     char **v;
     int i;
@@ -571,6 +607,7 @@ fmt_vectorize(fmt_t *f)
   }
   else
     vp = obstack_finish(f->pool);
+#endif  /* 0 */
 
   return vp;
 }
@@ -1200,7 +1237,7 @@ main(int argc, char *argv[])
   char buf[BUFSIZE + 1];
   char *s;
   int ch;
-  int flags = FF_MALLOC;
+  int flags = FF_MALLOC_STR | FF_MALLOC_VEC;
 
   fmt_t *fmt;
   fmt = fmt_new(flags);
@@ -1227,10 +1264,12 @@ main(int argc, char *argv[])
         if (vp) {
           while (*vp != NULL) {
             printf("%s\n", *vp);
+            if (flags & FF_MALLOC_STR)
+              free(*vp);
             vp++;
           }
         }
-        if (flags & FF_MALLOC)
+        if (flags & FF_MALLOC_VEC)
           free(old);
       }
       printf("\n");

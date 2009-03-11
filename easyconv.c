@@ -41,7 +41,7 @@ easyconv_str2str(iconv_t CD, char **DST, size_t *DST_SIZE,
   assert(DST_SIZE != NULL);
 
   if (SRC_SIZE == (size_t)-1)
-    SRC_SIZE = strlen(SRC);
+    SRC_SIZE = (SRC) ? strlen(SRC) : 0;
 
   if (*DST == NULL) {
     int len = (*DST_SIZE) ? *DST_SIZE : EASYCONV_CHUNK_SIZE;
@@ -156,7 +156,7 @@ main(int argc, char *argv[])
   size = 1;
 #endif
 
-  ret = easyconv_str2str(cd, &converted, &size, argv[2], (size_t)-1, &nrevconv);
+  ret = easyconv_str2str(cd, &converted, &size, argv[2], (size_t)0, &nrevconv);
   if (ret != (size_t)-1) {
     fprintf(stderr, "%d byte(s) converted\n", ret);
     fprintf(stderr, "%d character(s) converted\n", nrevconv);

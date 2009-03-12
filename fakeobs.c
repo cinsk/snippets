@@ -1,7 +1,7 @@
 /* $Id$ */
 /*
  * GNU obstack emulation, useful for debugging.
- * Copyright (C) 2004  Seong-Kook Shin <cinsk.shin@samsung.com>
+ * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>
  */
 #include <stdlib.h>
 #include <string.h>

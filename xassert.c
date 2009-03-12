@@ -2,7 +2,7 @@
 
 /*
  * Enhanced assert(3)
- * Copyright (C) 2003, 2004  Seong-Kook Shin <cinsk.shin@samsung.com>
+ * Copyright (C) 2003, 2004  Seong-Kook Shin <cinsky@gmail.com>
  */
 
 #include <stdarg.h>

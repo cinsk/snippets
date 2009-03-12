@@ -1,7 +1,7 @@
 /* $Id$ */
 /*
  * malloc debugger
- * Copyright (C) 2004  Seong-Kook Shin <cinsk.shin@samsung.com>
+ * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>
  */
 #include <stdarg.h>
 #include <stdio.h>

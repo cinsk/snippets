@@ -2,7 +2,7 @@
 
 /*
  * Embedded doubly linked list
- * Copyright (C) 2004  Seong-Kook Shin <cinsk.shin@samsung.com>
+ * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>
  */
 #ifndef ELIST_H_
 #define ELIST_H_

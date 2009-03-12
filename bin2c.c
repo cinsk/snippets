@@ -405,7 +405,7 @@ help_and_exit(void)
     "By default, The output is set to STDOUT, use `-o' to override this.",
     "To use STDIN as the input, use `-' as the filename",
     "",
-    "Report bugs to <cinsk.shin@samsung.com>"
+    "Report bugs to <cinsky@gmail.com>"
   };
   int i;
 

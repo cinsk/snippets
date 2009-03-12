@@ -1,7 +1,7 @@
 /* $Id$ */
 /*
  * Light file stream
- * Copyright (C) 2004  Seong-Kook Shin <cinsk.shin@samsung.com>
+ * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>
  */
 #include <stream.h>
 #include <xassert.h>

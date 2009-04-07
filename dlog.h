@@ -1,6 +1,6 @@
 /* $Id$ */
 /* dlog: message logger for debugging
- * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>
+ * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -21,16 +21,15 @@
 
 #include <stdio.h>
 
+#if 0
 #ifndef NDEBUG
 # if defined(__STDC__)
-#  define dlog(...)       dlog_(__VA_ARGS__)
+#  define dlog(...)       derror(0, __VA_ARGS__)
 # elif defined(__GNUC__)
-#  define dlog(args...)   dlog_(args)
+#  define dlog(args...)   derror(0, args)
 # else
 #  error cannot handle variadic macros
 # endif
-# define dlog_set_output(fp)     dlog_set_output_(fp)
-# define dlog_set_filter(mask)   dlog_set_filter_(mask)
 #else   /* NDEBUG */
 # if defined(__STDC__)
 #  define dlog(...)       ((void)0)
@@ -38,19 +37,35 @@
 #  define dlog(args...)   ((void)0)
 # else
 #  error cannot handle variadic macros
-# define dlog_set_output(fp)    ((void)0)
-# define dlog_set_filter(mask)  ((void)0)
+# endif
+# if !defined(DLOG_BUILD)
+#  define dlog_set_output(fp)    ((void)0)
+#  define dlog_set_filter(mask)  ((void)0)
+#  define dlog_init()            ((void)0)
+#  define dlog_thread_init()     ((void)0)
 # endif
 #endif  /* NDEBUG */
+#endif  /* 0 */
 
-#ifndef NDEBUG
-extern FILE *dlog_set_output_(FILE *fp);
-extern unsigned dlog_set_filter_(unsigned mask);
-extern void dlog_(int ecode, int status, unsigned category,
-                  const char *format, ...);
-#endif  /* NDEBUG */
 
-extern void derror(int ecode, int status, const char *format, ...);
+#if defined(__STDC__)
+#  define dlog(...)       derror(0, __VA_ARGS__)
+#elif defined(__GNUC__)
+#  define dlog(args...)   derror(0, args)
+#else
+#  error cannot handle variadic macros
+#endif
+
+extern void derror(int ecode, int status, unsigned category,
+                   const char *format, ...)
+  __attribute__ ((format (printf, 4, 5)));
+
+extern FILE *dlog_set_stream(FILE *fp);
+extern unsigned dlog_set_filter(unsigned mask);
+
+extern int dlog_init(void);
+extern int dlog_thread_init(void);
+extern int dlog_set_thread_name(const char *name);
 
 #define D_LOG           0x00000001
 #define D_WARN          0x00000002

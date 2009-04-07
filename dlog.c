@@ -1,6 +1,6 @@
 /* $Id$ */
 /* dlog: message logger for debugging
- * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>
+ * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -16,11 +16,15 @@
  * License along with this library; if not, write to the Free
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+#define _GNU_SOURCE
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <errno.h>
+
+#define DLOG_BUILD
 #include "dlog.h"
 
 #ifndef NO_THREAD
@@ -30,22 +34,49 @@
 # define funlockfile(fp)        ((void)0)
 #endif  /* NO_THREAD */
 
+#define DLOG_THREAD_NUM 128
+
 static FILE *dlog_fp;
 static unsigned dlog_mask;
-static const char *dlog_prefix = "dlog";
+static const char *dlog_prefix = NULL;
+
+
+static int dlog_thread = 0;
+
+#ifndef NO_THREAD
+static int dlog_thcounter;
+static pthread_once_t thinfo_once = PTHREAD_ONCE_INIT;
+static pthread_key_t key_thname;
+static pthread_mutex_t mutex_thname = PTHREAD_MUTEX_INITIALIZER;
+
+static void free_thname(void *value);
+static void dlog_thread_init_once(void);
+static char *dlog_create_name(void);
+#endif  /* NO_THREAD */
+
+
+static const char *dlog_get_thread_name(void);
+
+const char *program_name __attribute__((weak)) = NULL;
+//const char *program_name = NULL;
 
 
 FILE *
-dlog_set_output(FILE *fp)
+dlog_set_stream(FILE *fp)
 {
   FILE *old = dlog_fp;
-
-  if (dlog_fp == NULL)
-    dlog_fp = stderr;
 
   dlog_fp = fp;
 
   return old;
+}
+
+
+static void
+dlog_close_stream(void)
+{
+  if (dlog_fp)
+    fclose(dlog_fp);
 }
 
 
@@ -71,45 +102,50 @@ dlog_set_prefix(const char *prefix)
 
 
 void
-dlog_(int ecode, int status, unsigned category, const char *format, ...)
+derror(int ecode, int status, unsigned category, const char *format, ...)
 {
   va_list ap;
 
-  if (dlog_mask & category)
-    return;
+  if (dlog_fp) {
+    if (dlog_mask & category)
+      return;
 
-  if (!dlog_fp)
-    dlog_set_output(0);
+    //flockfile(stdout);
+    fflush(stdout);
+    flockfile(dlog_fp);
 
-  flockfile(stdout);
-  flockfile(dlog_fp);
-  fflush(stdout);
-  fprintf(dlog_fp, "%s: ", dlog_prefix);
+    if (dlog_prefix)
+      fprintf(dlog_fp, "%s: ", dlog_prefix);
 
-  if (status)
-    fprintf(dlog_fp, "%s: ", strerror(status));
+    if (dlog_thread)
+      fprintf(dlog_fp, "%s: ", dlog_get_thread_name());
 
-  va_start(ap, format);
-  vfprintf(dlog_fp, format, ap);
-  va_end(ap);
-  fputc('\n', dlog_fp);
+    if (status)
+      fprintf(dlog_fp, "%s: ", strerror(status));
 
-  fflush(stderr);
-  funlockfile(dlog_fp);
-  funlockfile(stdout);
+    va_start(ap, format);
+    vfprintf(dlog_fp, format, ap);
+    va_end(ap);
+    fputc('\n', dlog_fp);
+
+    fflush(dlog_fp);
+    funlockfile(dlog_fp);
+    //funlockfile(stdout);
+  }
 
   if (ecode)
     exit(ecode);
 }
 
 
+#if 0
 void
 derror(int ecode, int status, const char *format, ...)
 {
   va_list ap;
 
   if (!dlog_fp)
-    dlog_set_output_(0);
+    dlog_set_stream(0);
 
   flockfile(stdout);
   flockfile(dlog_fp);
@@ -131,3 +167,157 @@ derror(int ecode, int status, const char *format, ...)
   if (ecode)
     exit(ecode);
 }
+#endif  /* 0 */
+
+
+#ifndef NO_THREAD
+static void
+free_thname(void *value)
+{
+  if (value)
+    free(value);
+}
+
+
+static void
+dlog_thread_init_once(void)
+{
+  dlog_thcounter = 0;
+  if (pthread_key_create(&key_thname, free_thname) < 0)
+    fprintf(stderr, "dlog: cannot create a thread key: %s\n",
+            strerror(errno));
+}
+
+
+static char *
+dlog_create_name(void)
+{
+  char *name = NULL;
+#ifndef NO_THREAD
+  int id;
+
+  pthread_mutex_lock(&mutex_thname);
+  id = ++dlog_thcounter;
+  pthread_mutex_unlock(&mutex_thname);
+
+  if (asprintf(&name, "thread#%u", id) < 0)
+    return NULL;
+#endif  /* NO_THREAD */
+
+  return name;
+}
+#endif  /* NO_THREAD */
+
+
+int
+dlog_init(void)
+{
+  const char *p;
+  char *endptr = NULL;
+  unsigned int mask;
+  FILE *fp;
+
+  dlog_set_stream(stderr);
+  p = getenv("DLOG_FILE");
+  if (p && p[0] != '\0') {
+    fp = fopen(p, "w");
+    if (!fp)
+      fprintf(stderr, "warning: cannot open file in DLOG_FILE.\n");
+    else
+      dlog_set_stream(fp);
+  }
+  atexit(dlog_close_stream);
+
+  p = getenv("DLOG_MASK");
+  if (p && p[0] != '\0') {
+    mask = strtoul(p, &endptr, 0);
+    if (*endptr == '\0') {
+      dlog_mask = mask;
+    }
+    else {
+      if (program_name)
+        fprintf(stderr, "%s: ", program_name);
+      fprintf(stderr, "warning: unrecognized format in DLOG_MASK.\n");
+    }
+  }
+
+  if (program_name)
+    dlog_set_prefix(program_name);
+
+  return 0;
+}
+
+
+int
+dlog_thread_init(void)
+{
+  int ret = -1;
+
+#ifndef NO_THREAD
+  ret = 0;
+  dlog_thread = 1;
+  if (pthread_once(&thinfo_once, dlog_thread_init_once) != 0)
+    return -1;
+#endif  /* NO_THREAD */
+
+  return ret;
+}
+
+
+
+
+int
+dlog_set_thread_name(const char *name)
+{
+#ifndef NO_THREAD
+  char *p;
+
+  name = strdup(name);
+  if (!name)
+    return -1;
+
+  p = pthread_getspecific(key_thname);
+  if (p)
+    free(p);
+
+  if (pthread_setspecific(key_thname, name) != 0)
+    return -1;
+#endif  /* NO_THREAD */
+
+  return 0;
+}
+
+
+static const char *
+dlog_get_thread_name(void)
+{
+  char *p = NULL;
+
+#ifndef NO_THREAD
+  p = pthread_getspecific(key_thname);
+  if (!p) {
+    p = dlog_create_name();
+    dlog_set_thread_name(p);
+    free(p);
+  }
+  p = pthread_getspecific(key_thname);
+#endif  /* NO_THREAD */
+
+  return p;
+}
+
+
+#ifdef TEST_DLOG
+int
+main(void)
+{
+  dlog_init();
+  dlog_thread_init();
+  dlog_thread_init();
+
+  dlog(0, 0, 0x1, "hello %s.", "world");
+  dlog(0, 0, 0x2, "hi %s.", "world");
+
+  return 0;
+}
+#endif  /* TEST_DLOG */

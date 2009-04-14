@@ -54,7 +54,7 @@ def get_context(vid):
     fd = codecs.open(f, "rb", "UTF-8")
 
     re_arg = re.compile(u"""swfArgs *= *({[^}]*});$""")
-    re_title = re.compile(u"""title=([^']*)';$""")
+    re_title = re.compile(u"""title=(.*)';[ ]*$""")
     
     d = dict()
     s = ""
@@ -132,7 +132,7 @@ def get_video(vid, outfile = None):
         error(0, "parse error: 't' not found.")
         return False
     
-    if not mydict.has_key("title"):
+    if not mydict.has_key("title") or mydict["title"] == "":
         error(0, "warning: title not found.")
         mydict["title"] = "youtube"
         

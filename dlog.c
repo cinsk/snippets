@@ -21,6 +21,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include <errno.h>
 
@@ -105,10 +108,36 @@ void
 derror(int ecode, int status, unsigned category, const char *format, ...)
 {
   va_list ap;
+  int fd;
+  int ret;
+  struct flock lock;
 
   if (dlog_fp) {
     if (dlog_mask & category)
       return;
+
+    fflush(dlog_fp);
+#ifdef FLOCK
+    fd = fileno(dlog_fp);
+
+    lock.l_type = F_WRLCK;
+    lock.l_whence = SEEK_SET;
+    lock.l_start = 0;
+    lock.l_len = 0;
+
+    do {
+      ret = fcntl(fd, F_SETLK, &lock);
+      if (ret == 0)
+        break;
+      if (errno != EAGAIN && errno != EAGAIN) {
+        fprintf(stderr, "dlog: fcntl() failed on set: %s\n", strerror(errno));
+        abort();
+      }
+      else {
+        //fprintf(stderr, "dlog: locked. try again.\n");
+      }
+    } while (1);
+#endif  /* FLOCK */
 
     //flockfile(stdout);
     fflush(stdout);
@@ -118,7 +147,8 @@ derror(int ecode, int status, unsigned category, const char *format, ...)
       fprintf(dlog_fp, "%s: ", dlog_prefix);
 
     if (dlog_thread)
-      fprintf(dlog_fp, "%s: ", dlog_get_thread_name());
+      fprintf(dlog_fp, "<%d-%s>: ", (unsigned int)getpid(),
+              dlog_get_thread_name());
 
     if (status)
       fprintf(dlog_fp, "%s: ", strerror(status));
@@ -131,6 +161,17 @@ derror(int ecode, int status, unsigned category, const char *format, ...)
     fflush(dlog_fp);
     funlockfile(dlog_fp);
     //funlockfile(stdout);
+
+#ifdef FLOCK
+    lock.l_type = F_UNLCK;
+    ret = fcntl(fd, F_SETLK, &lock);
+    if (ret != 0) {
+      fprintf(stderr, "dlog: fcntl() failed on release: %s\n", strerror(errno));
+      abort();
+    }
+#endif  /* FLOCK */
+
+    fflush(dlog_fp);
   }
 
   if (ecode)
@@ -219,8 +260,12 @@ dlog_init(void)
 
   dlog_set_stream(stderr);
   p = getenv("DLOG_FILE");
-  if (p && p[0] != '\0') {
-    fp = fopen(p, "w");
+  if (p) {
+    if (p[0] == '\0')
+      dlog_set_stream(0);
+    else
+      fp = fopen(p, "w");
+
     if (!fp)
       fprintf(stderr, "warning: cannot open file in DLOG_FILE.\n");
     else

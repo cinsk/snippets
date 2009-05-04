@@ -44,13 +44,21 @@ static unsigned dlog_mask;
 static const char *dlog_prefix = NULL;
 
 
-static int dlog_thread = 0;
+static int dlog_thread = 0;     /* If zero, disable thread support */
 
 #ifndef NO_THREAD
-static int dlog_thcounter;
-static pthread_once_t thinfo_once = PTHREAD_ONCE_INIT;
-static pthread_key_t key_thname;
-static pthread_mutex_t mutex_thname = PTHREAD_MUTEX_INITIALIZER;
+struct thinfo_ {
+  int counter;                  /* for naming each thread */
+  pthread_once_t once;          /* once control for the initializer */
+  pthread_mutex_t mutex;        /* mutex for `counter' member */
+  pthread_key_t key;            /* thread-specific data for thread names */
+};
+
+static struct thinfo_ thinfo = {
+  0,
+  PTHREAD_ONCE_INIT,
+  PTHREAD_MUTEX_INITIALIZER,
+};
 
 static void free_thname(void *value);
 static void dlog_thread_init_once(void);
@@ -60,8 +68,7 @@ static char *dlog_create_name(void);
 
 static const char *dlog_get_thread_name(void);
 
-const char *program_name __attribute__((weak)) = NULL;
-//const char *program_name = NULL;
+const char *program_name __attribute__((weak)) = NULL ;
 
 
 FILE *
@@ -70,6 +77,7 @@ dlog_set_stream(FILE *fp)
   FILE *old = dlog_fp;
 
   dlog_fp = fp;
+  setvbuf(dlog_fp, NULL, _IONBF, 0);
 
   return old;
 }
@@ -105,7 +113,7 @@ dlog_set_prefix(const char *prefix)
 
 
 void
-derror(int ecode, int status, unsigned category, const char *format, ...)
+derror(int status, int errnum, unsigned category, const char *format, ...)
 {
   va_list ap;
   int fd;
@@ -141,25 +149,26 @@ derror(int ecode, int status, unsigned category, const char *format, ...)
 
     //flockfile(stdout);
     fflush(stdout);
-    flockfile(dlog_fp);
+    flockfile(dlog_fp);         /* Enter the critical section */
 
     if (dlog_prefix)
       fprintf(dlog_fp, "%s: ", dlog_prefix);
 
     if (dlog_thread)
-      fprintf(dlog_fp, "<%d-%s>: ", (unsigned int)getpid(),
+      fprintf(dlog_fp, "<%d-%s> ", (unsigned int)getpid(),
               dlog_get_thread_name());
-
-    if (status)
-      fprintf(dlog_fp, "%s: ", strerror(status));
 
     va_start(ap, format);
     vfprintf(dlog_fp, format, ap);
     va_end(ap);
+
+    if (errnum)
+      fprintf(dlog_fp, ": %s", strerror(errnum));
+
     fputc('\n', dlog_fp);
 
     fflush(dlog_fp);
-    funlockfile(dlog_fp);
+    funlockfile(dlog_fp);       /* Leave the critical section */
     //funlockfile(stdout);
 
 #ifdef FLOCK
@@ -174,14 +183,14 @@ derror(int ecode, int status, unsigned category, const char *format, ...)
     fflush(dlog_fp);
   }
 
-  if (ecode)
-    exit(ecode);
+  if (status)
+    exit(status);
 }
 
 
 #if 0
 void
-derror(int ecode, int status, const char *format, ...)
+derror(int status, int errnum, const char *format, ...)
 {
   va_list ap;
 
@@ -193,20 +202,21 @@ derror(int ecode, int status, const char *format, ...)
   fflush(stdout);
   fprintf(dlog_fp, "%s: ", dlog_prefix);
 
-  if (status)
-    fprintf(dlog_fp, "%s: ", strerror(status));
-
   va_start(ap, format);
   vfprintf(dlog_fp, format, ap);
   va_end(ap);
+
+  if (errnum)
+    fprintf(dlog_fp, ": %s", strerror(errnum));
+
   fputc('\n', dlog_fp);
 
   fflush(stderr);
   funlockfile(dlog_fp);
   funlockfile(stdout);
 
-  if (ecode)
-    exit(ecode);
+  if (status)
+    exit(status);
 }
 #endif  /* 0 */
 
@@ -223,8 +233,8 @@ free_thname(void *value)
 static void
 dlog_thread_init_once(void)
 {
-  dlog_thcounter = 0;
-  if (pthread_key_create(&key_thname, free_thname) < 0)
+  thinfo.counter = 0;
+  if (pthread_key_create(&thinfo.key, free_thname) < 0)
     fprintf(stderr, "dlog: cannot create a thread key: %s\n",
             strerror(errno));
 }
@@ -237,9 +247,9 @@ dlog_create_name(void)
 #ifndef NO_THREAD
   int id;
 
-  pthread_mutex_lock(&mutex_thname);
-  id = ++dlog_thcounter;
-  pthread_mutex_unlock(&mutex_thname);
+  pthread_mutex_lock(&thinfo.mutex);
+  id = ++thinfo.counter;
+  pthread_mutex_unlock(&thinfo.mutex);
 
   if (asprintf(&name, "thread#%u", id) < 0)
     return NULL;
@@ -301,7 +311,7 @@ dlog_thread_init(void)
 #ifndef NO_THREAD
   ret = 0;
   dlog_thread = 1;
-  if (pthread_once(&thinfo_once, dlog_thread_init_once) != 0)
+  if (pthread_once(&thinfo.once, dlog_thread_init_once) != 0)
     return -1;
 #endif  /* NO_THREAD */
 
@@ -321,11 +331,10 @@ dlog_set_thread_name(const char *name)
   if (!name)
     return -1;
 
-  p = pthread_getspecific(key_thname);
-  if (p)
-    free(p);
+  p = pthread_getspecific(thinfo.key);
+  free_thname(p);
 
-  if (pthread_setspecific(key_thname, name) != 0)
+  if (pthread_setspecific(thinfo.key, name) != 0)
     return -1;
 #endif  /* NO_THREAD */
 
@@ -339,13 +348,13 @@ dlog_get_thread_name(void)
   char *p = NULL;
 
 #ifndef NO_THREAD
-  p = pthread_getspecific(key_thname);
+  p = pthread_getspecific(thinfo.key);
   if (!p) {
     p = dlog_create_name();
     dlog_set_thread_name(p);
     free(p);
   }
-  p = pthread_getspecific(key_thname);
+  p = pthread_getspecific(thinfo.key);
 #endif  /* NO_THREAD */
 
   return p;

@@ -56,7 +56,7 @@
 #  error cannot handle variadic macros
 #endif
 
-extern void derror(int ecode, int status, unsigned category,
+extern void derror(int status, int errnum, unsigned category,
                    const char *format, ...)
   __attribute__ ((format (printf, 4, 5)));
 

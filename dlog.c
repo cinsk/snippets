@@ -84,26 +84,6 @@ static const char *dlog_get_thread_name(void);
 const char *program_name __attribute__((weak)) = NULL ;
 
 
-#if 0
-int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
-  __attribute__((weak));
-int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
-  __attribute__((weak));
-int pthread_mutex_lock(pthread_mutex_t *mutex)
-  __attribute__((weak));
-int pthread_mutex_unlock(pthread_mutex_t *mutex)
-  __attribute__((weak));
-void *pthread_getspecific(pthread_key_t key)
-  __attribute__((weak));
-int pthread_setspecific(pthread_key_t key, const void *value)
-  __attribute__((weak));
-int pthread_once(pthread_once_t *once_control,
-                        void (*init_routine)(void))
-  __attribute__((weak));
-static void thread_link_error(void);
-#endif  /* 0 */
-
-
 int
 dlog_set_file(int fd)
 {
@@ -154,7 +134,7 @@ dlog_set_prefix(const char *prefix)
 }
 
 
-#if defined(USE_GETTID) && (USE_GETTID > 0)
+#if !defined(NO_THREAD) && defined(USE_GETTID) && (USE_GETTID > 0)
 static pid_t
 gettid(void)
 {
@@ -207,39 +187,6 @@ derror(int status, int errnum, unsigned category, const char *format, ...)
   if (status)
     exit(status);
 }
-
-
-#if 0
-void
-derror(int status, int errnum, const char *format, ...)
-{
-  va_list ap;
-
-  if (!dlog_fp)
-    dlog_set_stream(0);
-
-  flockfile(stdout);
-  flockfile(dlog_fp);
-  fflush(stdout);
-  fprintf(dlog_fp, "%s: ", dlog_prefix);
-
-  va_start(ap, format);
-  vfprintf(dlog_fp, format, ap);
-  va_end(ap);
-
-  if (errnum)
-    fprintf(dlog_fp, ": %s", strerror(errnum));
-
-  fputc('\n', dlog_fp);
-
-  fflush(stderr);
-  funlockfile(dlog_fp);
-  funlockfile(stdout);
-
-  if (status)
-    exit(status);
-}
-#endif  /* 0 */
 
 
 #ifndef NO_THREAD
@@ -407,61 +354,6 @@ dlog_get_thread_name(void)
 
   return p;
 }
-
-
-#if 0
-int
-pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
-{
-  thread_link_error();
-  return 0;
-}
-
-int
-pthread_mutex_lock(pthread_mutex_t *mutex)
-{
-  thread_link_error();
-  return 0;
-}
-
-int
-pthread_mutex_unlock(pthread_mutex_t *mutex)
-{
-  thread_link_error();
-  return 0;
-}
-
-void *
-pthread_getspecific(pthread_key_t key)
-{
-  thread_link_error();
-  return NULL;
-}
-
-int
-pthread_setspecific(pthread_key_t key, const void *value)
-{
-  thread_link_error();
-  return 0;
-}
-
-int
-pthread_once(pthread_once_t *once_control,
-                 void (*init_routine)(void))
-{
-  return 0;
-}
-
-
-static void
-thread_link_error(void)
-{
-  /* You cannot call dlog() or derror() in this function! */
-  fprintf(stderr, "error: You forgot to link with `-lpthread'\n");
-  fprintf(stderr, "error: Otherwise, remove dlog_thread_init() call\n");
-  abort();
-}
-#endif  /* 0 */
 
 
 #ifdef TEST_DLOG

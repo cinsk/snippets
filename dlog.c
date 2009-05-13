@@ -21,11 +21,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
 #include <unistd.h>
+#include <limits.h>
 #include <fcntl.h>
-
 #include <errno.h>
+#include <sys/types.h>
+
+#include <snprintx.h>
+
 
 #define DLOG_BUILD
 #include "dlog.h"
@@ -39,12 +42,22 @@
 
 #define DLOG_THREAD_NUM 128
 
-static FILE *dlog_fp;
+#define HAVE_GETTID
+#define USE_GETTID     1
+
+#if defined(HAVE_GETTID) && defined(USE_GETTID) && (USE_GETTID > 0)
+#include <sys/syscall.h>
+#endif
+
+#define FILE_MODE       (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
+
+static int dlog_fd = -1;
 static unsigned dlog_mask;
 static const char *dlog_prefix = NULL;
 
 
 static int dlog_thread = 0;     /* If zero, disable thread support */
+static int dlog_trace_child = 0; /* If nonzero, print PID of each process */
 
 #ifndef NO_THREAD
 struct thinfo_ {
@@ -71,23 +84,52 @@ static const char *dlog_get_thread_name(void);
 const char *program_name __attribute__((weak)) = NULL ;
 
 
-FILE *
-dlog_set_stream(FILE *fp)
+#if 0
+int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
+  __attribute__((weak));
+int pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
+  __attribute__((weak));
+int pthread_mutex_lock(pthread_mutex_t *mutex)
+  __attribute__((weak));
+int pthread_mutex_unlock(pthread_mutex_t *mutex)
+  __attribute__((weak));
+void *pthread_getspecific(pthread_key_t key)
+  __attribute__((weak));
+int pthread_setspecific(pthread_key_t key, const void *value)
+  __attribute__((weak));
+int pthread_once(pthread_once_t *once_control,
+                        void (*init_routine)(void))
+  __attribute__((weak));
+static void thread_link_error(void);
+#endif  /* 0 */
+
+
+int
+dlog_set_file(int fd)
 {
-  FILE *old = dlog_fp;
+  int old = dlog_fd;
 
-  dlog_fp = fp;
-  setvbuf(dlog_fp, NULL, _IONBF, 0);
+  if (dlog_fd != fd) {
+    if (dlog_fd != -1)
+      close(dlog_fd);
 
+    if (fd != -1) {
+      fsync(fd);
+      if (fcntl(fd, F_SETFL, O_APPEND) == -1)
+        return -1;
+
+      dlog_fd = fd;
+    }
+  }
   return old;
 }
 
 
 static void
-dlog_close_stream(void)
+dlog_close_file(void)
 {
-  if (dlog_fp)
-    fclose(dlog_fp);
+  if (dlog_fd != -1)
+    close(dlog_fd);
 }
 
 
@@ -112,75 +154,54 @@ dlog_set_prefix(const char *prefix)
 }
 
 
+#if defined(USE_GETTID) && (USE_GETTID > 0)
+static pid_t
+gettid(void)
+{
+  return syscall(SYS_gettid);
+}
+#endif  /* USE_GETTID */
+
 void
 derror(int status, int errnum, unsigned category, const char *format, ...)
 {
   va_list ap;
-  int fd;
-  int ret;
-  struct flock lock;
+  char buf[PIPE_BUF];
+  char *ptr = buf;
+  ssize_t bufsize = sizeof(buf);
 
-  if (dlog_fp) {
+  if (dlog_fd != -1) {
     if (dlog_mask & category)
       return;
 
-    fflush(dlog_fp);
-#ifdef FLOCK
-    fd = fileno(dlog_fp);
-
-    lock.l_type = F_WRLCK;
-    lock.l_whence = SEEK_SET;
-    lock.l_start = 0;
-    lock.l_len = 0;
-
-    do {
-      ret = fcntl(fd, F_SETLK, &lock);
-      if (ret == 0)
-        break;
-      if (errno != EAGAIN && errno != EAGAIN) {
-        fprintf(stderr, "dlog: fcntl() failed on set: %s\n", strerror(errno));
-        abort();
-      }
-      else {
-        //fprintf(stderr, "dlog: locked. try again.\n");
-      }
-    } while (1);
-#endif  /* FLOCK */
-
-    //flockfile(stdout);
     fflush(stdout);
-    flockfile(dlog_fp);         /* Enter the critical section */
+    if (dlog_fd == STDERR_FILENO)
+      fflush(stderr);
 
     if (dlog_prefix)
-      fprintf(dlog_fp, "%s: ", dlog_prefix);
+      snprintx(&ptr, &bufsize, "%s: ", dlog_prefix);
 
-    if (dlog_thread)
-      fprintf(dlog_fp, "<%d-%s> ", (unsigned int)getpid(),
+    if (dlog_thread && dlog_trace_child)
+      snprintx(&ptr, &bufsize, "<%d:%s> ", (unsigned int)getpid(),
               dlog_get_thread_name());
+    else if (dlog_thread)
+      snprintx(&ptr, &bufsize, "<:%s> ", dlog_get_thread_name());
+    else if (dlog_trace_child)
+      snprintx(&ptr, &bufsize, "<%d:> ", (unsigned int)getpid());
 
     va_start(ap, format);
-    vfprintf(dlog_fp, format, ap);
+    vsnprintx(&ptr, &bufsize, format, ap);
     va_end(ap);
 
     if (errnum)
-      fprintf(dlog_fp, ": %s", strerror(errnum));
+      vsnprintx(&ptr, &bufsize, ": %s", strerror(errnum));
 
-    fputc('\n', dlog_fp);
+    snprintx(&ptr, &bufsize, "\n");
 
-    fflush(dlog_fp);
-    funlockfile(dlog_fp);       /* Leave the critical section */
-    //funlockfile(stdout);
+    if (bufsize > 0)
+      write(dlog_fd, buf, sizeof(buf) - bufsize);
 
-#ifdef FLOCK
-    lock.l_type = F_UNLCK;
-    ret = fcntl(fd, F_SETLK, &lock);
-    if (ret != 0) {
-      fprintf(stderr, "dlog: fcntl() failed on release: %s\n", strerror(errno));
-      abort();
-    }
-#endif  /* FLOCK */
-
-    fflush(dlog_fp);
+    fsync(dlog_fd);
   }
 
   if (status)
@@ -245,6 +266,11 @@ dlog_create_name(void)
 {
   char *name = NULL;
 #ifndef NO_THREAD
+
+#if defined(USE_GETTID) && (USE_GETTID > 0)
+  if (asprintf(&name, "%u", (unsigned)gettid()) < 0)
+    return NULL;
+#else
   int id;
 
   pthread_mutex_lock(&thinfo.mutex);
@@ -253,6 +279,8 @@ dlog_create_name(void)
 
   if (asprintf(&name, "thread#%u", id) < 0)
     return NULL;
+#endif  /* USE_GETTID */
+
 #endif  /* NO_THREAD */
 
   return name;
@@ -266,22 +294,26 @@ dlog_init(void)
   const char *p;
   char *endptr = NULL;
   unsigned int mask;
-  FILE *fp;
+  int fd;
+  int tracep;
 
-  dlog_set_stream(stderr);
+  dlog_set_file(STDERR_FILENO);
   p = getenv("DLOG_FILE");
   if (p) {
     if (p[0] == '\0')
-      dlog_set_stream(0);
-    else
-      fp = fopen(p, "w");
+      dlog_set_file(-1);
+    else if (strcmp(p, "-") == 0)
+      dlog_set_file(STDOUT_FILENO);
+    else {
+      fd = open(p, O_WRONLY | O_CREAT | O_APPEND | O_TRUNC, FILE_MODE);
 
-    if (!fp)
-      fprintf(stderr, "warning: cannot open file in DLOG_FILE.\n");
-    else
-      dlog_set_stream(fp);
+      if (fd == -1)
+        fprintf(stderr, "warning: cannot open file in DLOG_FILE.\n");
+      else
+        dlog_set_file(fd);
+    }
   }
-  atexit(dlog_close_stream);
+  atexit(dlog_close_file);
 
   p = getenv("DLOG_MASK");
   if (p && p[0] != '\0') {
@@ -294,6 +326,22 @@ dlog_init(void)
         fprintf(stderr, "%s: ", program_name);
       fprintf(stderr, "warning: unrecognized format in DLOG_MASK.\n");
     }
+  }
+
+  p = getenv("DLOG_TRACE_CHILD");
+  if (p) {
+    if (p[0] != '\0') {
+      tracep = strtoul(p, &endptr, 0);
+      if (*endptr == '\0')
+        dlog_trace_child = (tracep) ? 1 : 0;
+      else {
+        if (program_name)
+          fprintf(stderr, "%s: ", program_name);
+        fprintf(stderr, "warning: unrecognized format in DLOG_TRACE_CHILD.\n");
+      }
+    }
+    else
+      dlog_trace_child = 0;
   }
 
   if (program_name)
@@ -361,16 +409,71 @@ dlog_get_thread_name(void)
 }
 
 
+#if 0
+int
+pthread_key_create(pthread_key_t *key, void (*destructor)(void *))
+{
+  thread_link_error();
+  return 0;
+}
+
+int
+pthread_mutex_lock(pthread_mutex_t *mutex)
+{
+  thread_link_error();
+  return 0;
+}
+
+int
+pthread_mutex_unlock(pthread_mutex_t *mutex)
+{
+  thread_link_error();
+  return 0;
+}
+
+void *
+pthread_getspecific(pthread_key_t key)
+{
+  thread_link_error();
+  return NULL;
+}
+
+int
+pthread_setspecific(pthread_key_t key, const void *value)
+{
+  thread_link_error();
+  return 0;
+}
+
+int
+pthread_once(pthread_once_t *once_control,
+                 void (*init_routine)(void))
+{
+  return 0;
+}
+
+
+static void
+thread_link_error(void)
+{
+  /* You cannot call dlog() or derror() in this function! */
+  fprintf(stderr, "error: You forgot to link with `-lpthread'\n");
+  fprintf(stderr, "error: Otherwise, remove dlog_thread_init() call\n");
+  abort();
+}
+#endif  /* 0 */
+
+
 #ifdef TEST_DLOG
 int
 main(void)
 {
   dlog_init();
   dlog_thread_init();
-  dlog_thread_init();
+  //dlog_thread_init();
 
-  dlog(0, 0, 0x1, "hello %s.", "world");
-  dlog(0, 0, 0x2, "hi %s.", "world");
+  dlog(0, 0x1, "hello %s.", "world");
+  dlog(0, 0x2, "hi %s.", "world");
 
   return 0;
 }

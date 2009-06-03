@@ -106,12 +106,14 @@ fi
 case $dictype in
     en|EN)
         dicurl=$EEDIC_URL
-        startmark='^\[dot'
+        #startmark='^\[dot'
+        startmark='^닫기$'
         dictname="Collins COBUILD Advanced Learner's English Dictionary 4th Edition"
         ;;
     ko|KO|kr)
         dicurl=$ENDIC_URL
-        startmark='(검색결과|\[btn_close_)'
+        #startmark='(검색결과|\[btn_close_)'
+        startmark='^닫기$'
         dictname="동아 프라임 영한사전"
         ;;
     *)
@@ -120,15 +122,36 @@ case $dictype in
         ;;
 esac
 
+#
+# Unicode character map for the image glyphs
+#
+blt_exam=`echo -e '\xe2\x96\xb6'` # U+25B6
+bu_tr13=`echo -e '\xe2\x96\xb6'`  # U+25B6
+ico_star1=`echo -e '\xe2\x98\x85'` # U+2605
+ico_star2="${ico_star1}${ico_star1}"
+ico_star3="${ico_star1}${ico_star1}${ico_star1}"
+ico_star4="${ico_star1}${ico_star1}${ico_star1}${ico_star1}"
+ico_star5="${ico_star1}${ico_star1}${ico_star1}${ico_star1}${ico_star1}"
+
 shift `expr $OPTIND - 1`
 
 for word in "$@"; do
     if test "$multi"; then echo ; fi
+    #echo "${dicurl}${word}"
     w3m -dump "${dicurl}${word}" | awk "
 /검색결과가 없습니다./  { exit 1 }
 /$startmark/	{ doprint=1; next }
 /^top$/	        { exit }
-{ if (doprint) print }"
+{ if (doprint) print }" | sed -e "
+s/\[blt_exam\]/${blt_exam}/g
+s/\[ico_star1\]/${ico_star1}/g
+s/\[ico_star2\]/${ico_star2}/g
+s/\[ico_star3\]/${ico_star3}/g
+s/\[ico_star4\]/${ico_star4}/g
+s/\[ico_star5\]/${ico_star5}/g
+s/\[bu_tr13\]/${bu_tr13}/g
+"
+
 #/^\[dot/,/^top/ { print }'
 #        | tail -n +2 | head -n -1
     status=$?

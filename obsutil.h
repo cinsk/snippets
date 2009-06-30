@@ -43,16 +43,18 @@
 # define obstack_chunk_free      free
 #endif
 
-/* This indirect writing of extern "C" { ... } makes XEmacs happy */
+/* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
-# define BEGIN_C_DECLS   extern "C" {
-# define END_C_DECLS      }
-#endif  /* BEGIN_C_DECLS */
+# ifdef __cplusplus
+#  define BEGIN_C_DECLS extern "C" {
+#  define END_C_DECLS   };
+# else
+#  define BEGIN_C_DECLS
+#  define END_C_DECLS
+# endif
+#endif /* BEGIN_C_DECLS */
 
-#ifdef __cplusplus
 BEGIN_C_DECLS
-#endif
-
 
 #define ZAP_PARAM_WARN(x)       ((void)x)
 
@@ -235,7 +237,7 @@ static __inline__ int
 OBSTACK_PTR_GROW(struct obstack *stack, const void *data)
 {
   OBS_ERROR_CLEAR;
-  obstack_ptr_grow(stack, data);
+  obstack_ptr_grow(stack, (void *)data);
   if (obstack_errno_)
     return -1;
   return 0;
@@ -460,7 +462,7 @@ OBSTACK_DUP_GROW0(struct obstack *stack)
 static __inline__ char *
 OBSTACK_STR_COPY(struct obstack *stack, const char *s)
 {
-  return OBSTACK_COPY0(stack, s, strlen(s));
+  return (char *)OBSTACK_COPY0(stack, s, strlen(s));
 }
 
 
@@ -471,7 +473,7 @@ OBSTACK_STR_COPY2(struct obstack *stack, const char *s1, const char *s2)
   int l1 = strlen(s1);
   int l2 = strlen(s2);
 
-  ret = OBSTACK_ALLOC(stack, l1 + l2 + 1);
+  ret = (char *)OBSTACK_ALLOC(stack, l1 + l2 + 1);
   if (!ret)
     return 0;
 
@@ -491,7 +493,7 @@ OBSTACK_STR_COPY3(struct obstack *stack,
   int l2 = strlen(s2);
   int l3 = strlen(s3);
 
-  ret = OBSTACK_ALLOC(stack, l1 + l2 + l3 + 1);
+  ret = (char *)OBSTACK_ALLOC(stack, l1 + l2 + l3 + 1);
   if (!ret)
     return 0;
 
@@ -599,7 +601,7 @@ OBSTACK_1WGROW(struct obstack *stack, wchar_t c)
 static __inline__ wchar_t *
 OBSTACK_WSTR_COPY(struct obstack *stack, const wchar_t *s)
 {
-  return OBSTACK_WCOPY0(stack, s, wcslen(s) * sizeof(wchar_t));
+  return (wchar_t *)OBSTACK_WCOPY0(stack, s, wcslen(s) * sizeof(wchar_t));
 }
 
 static __inline__ wchar_t *
@@ -609,7 +611,7 @@ OBSTACK_WSTR_COPY2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
   size_t l1 = wcslen(s1);
   size_t l2 = wcslen(s2);
 
-  p = OBSTACK_ALLOC(stack, (l1 + l2 + 1) * sizeof(wchar_t));
+  p = (wchar_t *)OBSTACK_ALLOC(stack, (l1 + l2 + 1) * sizeof(wchar_t));
   if (!p)
     return 0;
 
@@ -629,7 +631,7 @@ OBSTACK_WSTR_COPY3(struct obstack *stack,
   int l2 = wcslen(s2);
   int l3 = wcslen(s3);
 
-  ret = OBSTACK_ALLOC(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
+  ret = (wchar_t *)OBSTACK_ALLOC(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
   if (!ret)
     return 0;
 
@@ -693,9 +695,7 @@ OBSTACK_WSTR_GROW3(struct obstack *stack,
 #endif  /* NO_WCHAR_SUPPORT */
 
 
-#ifdef __cplusplus
 END_C_DECLS
-#endif
 
 #endif  /* OBSUTIL_H_ */
 

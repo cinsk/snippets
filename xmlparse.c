@@ -529,9 +529,9 @@ xp_find_attr(const char *attrs[], const char *spec)
 static void
 start_cb(XMLCONTEXT *context, void *data, const char *name, const char **attrs)
 {
-  printf("%*s%s (%d)\n", context->lev * 4, " ", name, context->lev);
+  printf("%*s%s (%d)\n", xp_level(context) * 4, " ", name, xp_level(context));
 
-  if (context->lev == 5) {
+  if (xp_level(context) == 5) {
     int ret;
 
     xp_dump_stack(context, NULL);
@@ -557,7 +557,7 @@ main(int argc, char *argv[])
 
   context = xp_open(argv[1]);
 
-  printf("filename: %s\n", context->filename);
+  printf("filename: %s\n", xp_filename(context));
 
   fd = open(argv[1], O_RDONLY);
 

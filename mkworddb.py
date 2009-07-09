@@ -22,6 +22,58 @@ OUTPUT = "eedic.db"
 
 mkworddb_version = "$Revision$"
 
+(WC_ADJ,                                # adjective
+ WC_ADV,                                # adverb
+ WC_AUX,                                # auxiliary verb
+ WC_COLOUR,                             # colour word
+ WC_COMB,                               # combining form
+ WC_CONJ,                               # conjunction
+ WC_CONVENTION,                         # convention
+ WC_DET,                                # determiner
+ WC_EXCLAM,                             # exclamation
+ WC_FRACTION,                           # fraction
+ WC_LINK,                               # see WC_V_LINK
+ WC_MODAL,                              # modal verb
+ WC_N_COUNT,                            # count noun
+ WC_N_COUNT_COLL,                       # collective count noun
+ WC_N_FAMILY,                           # family noun
+ WC_N_IN_NAMES,                         # noun in names
+ WC_N_MASS,                             # mass noun
+ WC_N_PLURAL,                           # plural noun
+ WC_N_PROPER,                           # proper noun
+ WC_N_PROPER_COLL,                      # collective proper noun
+ WC_N_PROPER_PLURAL,                    # plural proper noun
+ WC_N_SING,                             # singular noun
+ WC_N_SING_COLL,                        # collective singular noun
+ WC_N_TITLE,                            # title noun
+ WC_N_UNCOUNT,                          # uncount noun
+ WC_N_UNCOUNT_COLL,                     # collective uncount noun
+ WC_N_VAR,                              # variable noun
+ WC_N_VAR_COLL,                         # coolective variable noun
+ WC_N_VOC,                              # vocative noun
+ WC_NEG,                                # negative
+ WC_NUM,                                # number
+ WC_ORD,                                # ordinal
+ WC_PASSIVE,                            # see WC_V_PASSIVE
+ WC_PHRASAL_VERB,                       # phrasal verb
+ WC_PHRASE,                             # phrase
+ WC_PREDET,                             # predeterminer
+ WC_PREFIX,                             # prefix
+ WC_PREP,                               # preposition
+ WC_PREP_PHRASE,                        # phrasal preposition
+ WC_PRON,                               # pronoun
+ WC_QUANT,                              # quantifier
+ WC_QUANT_PLURAL,                       # plural quantifier
+ WC_QUEST,                              # question word
+ WC_RECIP,                              # See WC_V_RECIP
+ WC_SOUND,                              # sound noun
+ WC_SUFFIX,                             # suffix
+ WC_VERB,                               # verb
+ WC_V_LINK,                             # link verb
+ WC_V_PASSIVE,                          # passive verb
+ WC_V_RECIP,                            # reciprocal verb
+ WC_V_RECIP_PASSIVE ) = range(51)       # passive reciprocal verb
+
 def error(status, errnum, message, *args):
     """Print a given message into STDERR.  If STATUS is nonzero, the program will be terminated with STATUS."""
     if sys.argv[0] != "":
@@ -79,21 +131,54 @@ def get_html(dirname, word_id):
         sys.stdout.write("done\n")
     except IOError, (errno, strerror):
         error(0, errno, "")
+
+def parse_definition(defstr):
+    pass
     
-def get_star(word_id):
-    """Return (WORD_ID, WORD, STAR) for given WORD_ID
-where WORD_ID is the argument, WORD is a word string in unicode,
+def get_star(fd):
+    """Return (WORD_ID, WORD, DEFINITION, STAR) from given file, FD.
+where WORD is a word string in unicode,
 and STAR is between 0-5."""
+    re_wid = re.compile("""value="?([0-9]+)"?>""")
     re_word = re.compile("""<span id="entry"[^>]*>([^<]*)</span>""")
     re_star = re.compile("""img_star_([1-5]).gif""")
-    url = "http://eedic.naver.com/eedic.naver?id=%u" % word_id
 
-    fd = urllib.urlopen(url)
-
+    word_id = None
     word = None
     star = 0
+    defblk = ""
+
+    while True:
+        # Find the word id
+        line = fd.readline()
+        if len(line) == 0:
+            break
+
+        if line.find("source_no") >= 0:
+            match = re_wid.search(line)
+            if match != None:
+                word_id = int(match.group(1))
+                break
+            
+    while True:
+        # Find the definition block
+        line = fd.readline()
+        if len(line) == 0:
+            break
+
+        if line.find("source_contents") >= 0:
+            begin = line.find("value=\"")
+            if begin < 0:
+                continue
+            begin += 7 # Add the length of "value=\""
+            end = line.rfind("\">")
+            if end < 0:
+                continue
+            defblk = line[begin:end]
+            break
     
     while True:
+        # Find the name of the word
         line = fd.readline()
         if len(line) == 0:
             break
@@ -117,8 +202,16 @@ and STAR is between 0-5."""
                 break
 
     fd.close()
-    return (word_id, word, star)
+    return (word_id, word, defblk, star)
 
+def parse_wordhtml(dirname, word_id):
+    name = os.path.join(dirname, "%d.html" % word_id)
+
+    if not os.access(fname, os.R_OK):
+        return False
+
+
+    
 def get_def_from_html(dirname, word_id):
     re_word = re.compile("""<span id="entry"[^>]*>([^<]*)</span>""")
     re_star = re.compile("""img_star_([1-5]).gif""")
@@ -196,9 +289,10 @@ def main():
     sys.stdout = codecs.getwriter('UTF-8')(sys.stdout)
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "o:Or:S",
+        opts, args = getopt.getopt(sys.argv[1:], "o:Or:SW:",
                                    ["help", "range=", "overwrite", \
-                                    "saveonly", "output=", "version"])
+                                    "saveonly", "output=", \
+                                    "wordid=", "version"])
     except getopt.GetoptError:
         # print help information and exit:
         sys.stderr.write("%s: invalid option\n" % sys.argv[0])
@@ -211,6 +305,7 @@ def main():
     overwrite = False
     wrange = word_range()
     saveonly = False
+    wid = None
     
     for o, a in opts:
         if o in ("--help"):
@@ -227,10 +322,29 @@ def main():
             overwrite = True
         elif o in ("-S", "--saveonly"):
             saveonly = True
-
+        elif o in ("-W", "--wordid"):
+            wid = int(a)
+            
     if wrange == None or len(wrange) != 2:
         sys.stderr.write("mkworddb: wrong RANGE-SPEC")
         sys.exit(1)
+
+
+    if wid != None:
+        if output == None:
+            output = WORDDIR
+        fname = os.path.join(output, "%d.html" % wid)
+        fd = codecs.open(fname, "r", "cp949")
+        ret = get_star(fd)
+
+        print "name: %s" % ret[1]
+        print ""
+        print "id: %d" % ret[0]
+        print ""
+        print "def: %s" % ret[2]
+        print ""
+        print "star: %d" % ret[3]
+        sys.exit(0)
 
     if saveonly:
         if output == None:
@@ -251,14 +365,17 @@ def main():
         if saveonly:
             get_html(output, wid)
         else:
-            ret = get_star(wid)
+            url = "http://eedic.naver.com/eedic.naver?id=%u" % word_id
+            fd = urllib.urlopen(url)
+
+            ret = get_star(fd)
 
             if ret == None or len(ret) != 3:
                 print "# WID(%d) error" % wid
                 fd.write("# WID(%d) error\n" % wid)
             else:
-                print "%d||%s||%d" % (ret[0], ret[1], ret[2])
-                fd.write("%d||%s||%d\n" % (ret[0], ret[1], ret[2]))
+                print "%d||%s||%d" % (ret[0], ret[1], ret[3])
+                fd.write("%d||%s||%d\n" % (ret[0], ret[1], ret[3]))
 
     if fd != None:
         fd.close()
@@ -306,6 +423,8 @@ usage: %s [OPTION...]
 
   -S, --saveonly      save all word entries (html) into
                       the directory specified in `-o'.
+
+  -c, --create        create the initial database
                       
   --help              show this help messages and exit
   --version           show version string and exit

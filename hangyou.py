@@ -14,9 +14,14 @@ import sys
 import random
 import getopt
 import codecs
-import curses
-import curses.ascii
 
+try:
+    import curses
+    import curses.ascii
+except ImportError:
+    print "error: %s requires `curses' package" % sys.argv[0]
+    sys.exit(1)
+    
 hangyou_version = "$Revision$"
 
 URL_WORDS_TODAY = "http://eedic.naver.com/"
@@ -2626,11 +2631,22 @@ def main():
                 pre_word_lst.append(int(a))
             except ValueError:
                 pass
-            
-    inner_main()
+
+    try:
+        curs_main()
+    except Exception, e:
+        curses.endwin()
+        print "error: exception occurred: ", e
+    except KeyboardInterrupt:
+        curses.endwin()
+    
+    print "You solved %d question(s) and got %d scores in your lifetime." \
+          % (gbl_solved, gbl_score)
+
+    print_review()
         
 
-def inner_main():
+def curs_main():
     global msgwin, boawin, scrwin, defwin, gbl_solved, gbl_score, gbl_review
     global COLS, LINES
     global pre_word_lst
@@ -2713,13 +2729,6 @@ def inner_main():
 
         for d in defs:
             print "\t", make_quiz(w[0], d)
-            
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception, e:
-        curses.endwin()
-        print "error: exception occurred: ", e
-        sys.exit(1)
-
+    main()

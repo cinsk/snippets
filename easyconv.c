@@ -147,7 +147,7 @@ main(int argc, char *argv[])
     return 1;
   }
 
-#if 0
+#if 1
   converted = NULL;
   size = 0;
 #else
@@ -156,7 +156,7 @@ main(int argc, char *argv[])
   size = 1;
 #endif
 
-  ret = easyconv_str2str(cd, &converted, &size, argv[2], (size_t)0, &nrevconv);
+  ret = easyconv_str2str(cd, &converted, &size, argv[2], (size_t)-1, &nrevconv);
   if (ret != (size_t)-1) {
     fprintf(stderr, "%d byte(s) converted\n", ret);
     fprintf(stderr, "%d character(s) converted\n", nrevconv);

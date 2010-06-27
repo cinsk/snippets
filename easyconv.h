@@ -55,7 +55,12 @@ BEGIN_C_DECLS
  *
  * easyconv_str2str() convert the character set of bytes in `SRC'
  * buffer with the size `SRC_SIZE' using iconv module `CD'.  The
- * successfully converted characters are stored in `*DST'.
+ * successfully converted characters are stored in `*DST'.  Note that
+ * `SRC_SIZE' is the number of bytes in `SRC', not the character count
+ * in `SRC'.  If you pass `-1' in `SRC_SIZE', easyconv_str2str() will
+ * call strlen() to calculate the actual count.  Thus, if the source
+ * string is not UTF-8 related encoding, you should not pass `-1'
+ * here.  You should calculate the `SRC_SIZE' by yourself.
  *
  * easyconv_str2str() dynamically allocated the storage for the
  * destination string.  Before calling this function, you should place

@@ -29,6 +29,19 @@
  * syste-wide limit via "/proc/sys/net/core/[rw]mem_max".
  */
 
+/*
+ * To compile it, you may need to define _GNU_SOURCE.
+ * msgq module needs "-lpthread".
+ *
+ * $ cc -D_GNU_SOURCE your-source.c msgq.c -lpthread
+ *
+ * msgq module provides a simple test server, which can be compiled by:
+ *
+ * $ cc -D_GNU_SOURCE -DTEST_MSGQ msgq.c -lpthread
+ *
+ * See the comments for main() in msgq.c for using the test server.
+ */
+
 /* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
 # ifdef __cplusplus

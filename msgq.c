@@ -1,4 +1,3 @@
-
 /* $Id$ */
 /* Simple message queue implementation using UNIX domain socket.
  * Copyright (C) 2010  Seong-Kook Shin <cinsky@gmail.com>
@@ -683,6 +682,23 @@ debug_(int errnum, const char *fmt, ...)
 }
 
 
+#ifdef TEST_MSGQ
+/*
+ * This is the server side sample.
+ *
+ * You can send a message to this server using socat(1).
+ * Each line by socat(1) will be a packet to the server.
+ *
+ * Since the first 8 bytes are used for maintaing packet header,
+ * you may pass any byte for the first 8 bytes.  The server will
+ * ignore that data.
+ *
+ * If the line(packet) is shorter than 8, the server will ignore that
+ * packet.
+ *
+ * $ socat -U UNIX-SENDTO:/tmp/msgq,bind=/tmpmsgq-cli STDIO
+ * 00000000hello, world
+ */
 int
 main(void)
 {
@@ -712,4 +728,4 @@ main(void)
   msgq_close(msgq);
   return 0;
 }
-
+#endif  /* TEST_MSGQ */

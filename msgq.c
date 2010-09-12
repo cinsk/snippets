@@ -296,6 +296,7 @@ msgq_broadcast_wildcard(MSGQ *msgq, const char *pattern,
     return -1;
 
   for (i = 0; i < gbuf.pathc; i++) {
+    DEBUG(0, "msgq_broadcast_wildcard: to |%s|...", gbuf.pathv[i]);
     msgq_send(msgq, gbuf.pathv[i], packet);
   }
 

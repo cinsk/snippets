@@ -22,7 +22,9 @@
 
 #include "msgq.h"
 #include "elist.h"
-
+#ifdef MSGQ_BROADCAST
+#include "sglob.h"
+#endif  /* MSGQ_BROADCAST */
 
 #ifndef UNIX_PATH_MAX
 #define UNIX_PATH_MAX   (sizeof(struct sockaddr_un) - sizeof(sa_family_t))
@@ -251,6 +253,56 @@ msgq_send(MSGQ *msgq, const char *receiver, const struct msgq_packet *packet)
 
   return 0;
 }
+
+
+#ifdef MSGQ_BROADCAST
+int
+msgq_broadcast_string_wildcards(MSGQ *msgq, const char *pattern,
+                                const char *fmt, ...)
+{
+  va_list ap;
+  int ret;
+  struct msgq_packet *p;
+
+  va_start(ap, fmt);
+  ret = vsnprintf(NULL, 0, fmt, ap);
+  va_end(ap);
+  p = malloc(sizeof(*p) + ret + 1);
+  if (!p)
+    return -1;
+  va_start(ap, fmt);
+  vsnprintf(p->data, ret + 1, fmt, ap);
+  va_end(ap);
+  p->size = ret + 1;
+  p->container = NULL;
+
+  msgq_broadcast_wildcard(msgq, pattern, p);
+
+  free(p);
+  return ret;
+}
+
+
+int
+msgq_broadcast_wildcard(MSGQ *msgq, const char *pattern,
+                         const struct msgq_packet *packet)
+{
+  sglob_t gbuf;
+  int i;
+
+  gbuf.mask = S_IFSOCK;
+
+  if (sglob(pattern, SGLOB_MASK, &gbuf) < 0)
+    return -1;
+
+  for (i = 0; i < gbuf.pathc; i++) {
+    msgq_send(msgq, gbuf.pathv[i], packet);
+  }
+
+  sglobfree(&gbuf);
+  return 0;
+}
+#endif  /* MSGQ_BROADCAST */
 
 
 MSGQ *
@@ -696,7 +748,7 @@ debug_(int errnum, const char *fmt, ...)
  * If the line(packet) is shorter than 8, the server will ignore that
  * packet.
  *
- * $ socat -U UNIX-SENDTO:/tmp/msgq,bind=/tmpmsgq-cli STDIO
+ * $ socat UNIX-SENDTO:/tmp/msgq,bind=/tmpmsgq-cli STDIO
  * 00000000hello, world
  */
 int
@@ -718,6 +770,11 @@ main(void)
 
       printf("packet(%s): |%s|\n",
              msgq_pkt_sender(packet), packet->data);
+
+#ifdef MSGQ_BROADCAST
+      printf("broadcasting to /tmp/cli*...\n");
+      msgq_broadcast_wildcard(msgq, "/tmp/cli*", packet);
+#endif  /* MSGQ_BROADCAST */
 
       if (strcmp(packet->data, "quit") == 0)
         cond = 0;

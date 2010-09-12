@@ -42,6 +42,17 @@
  * See the comments for main() in msgq.c for using the test server.
  */
 
+/*
+ * If you want broadcasting functions, define MSGQ_BROADCAST to compile it.
+ * you need sglob module to buid it.  For example:
+ *
+ * $ cc -D_GNU_SOURCE -DMSGQ_BROADCAST your-source msgq.c sglob.c -lpthread
+ *
+ * For the test server:
+ *
+ * $ cc -D_GNU_SOURCE -DMSGQ_BROADCAST -DTEST_MSGQ msgq.c sglob.c -lpthread
+ *
+ */
 /* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
 # ifdef __cplusplus
@@ -106,6 +117,26 @@ extern int msgq_send(MSGQ *msgq, const char *receiver,
 extern int msgq_send_string(MSGQ *msgq, const char *receiver,
                             const char *format, ...)
   __attribute__ ((format (printf, 3, 4)));
+
+
+#ifdef MSGQ_BROADCAST
+/*
+ * Broadcast a packet to the addresses that satisfies the given filename
+ * wildcard.
+ *
+ * Note that msgq_broadcast_wildcard() does not care for success of
+ * sending a packet.  If this function fails to allocate/prepare for
+ * broadcasting, it returns -1.  Otherwise returns zero.
+ */
+extern int msgq_broadcast_wildcard(MSGQ *msgq, const char *pattern,
+                                   const struct msgq_packet *packet);
+
+/*
+ * String version of msgq_broadcast_wildcard().
+ */
+extern int msgq_broadcast_string_wildcards(MSGQ *msgq, const char *pattern,
+                                           const char *fmt, ...);
+#endif  /* MSGQ_BROADCAST */
 
 /*
  * Get a packet from the message queue.

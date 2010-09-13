@@ -22,14 +22,19 @@
  * TODO -- to collect filename recursively onto its subdirectories
  *         (with no change corrent working directory)
  */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#include <stdarg.h>
 #include <sys/types.h>
 #include <dirent.h>
 #include <fnmatch.h>
-#include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include "sglob.h"
+
+#include <string.h>
 
 #define DIR_SEPARATOR '/'
 #define DIR_SEPARATORS "/"
@@ -40,7 +45,54 @@ static int sglob_push(sglob_t *glob, const char *dir, const char *filename);
 
 
 int
-sglob(const char *directory, const char *pattern, int flags, sglob_t *glob)
+sglob(const char *pattern, int flags, sglob_t *glob)
+{
+  char *p;
+  char *dir, *filename;
+  int ret;
+  char *pat = NULL;
+  int len = 0;
+
+  dir = NULL;
+  filename = NULL;
+
+  if (pattern) {
+    pat = strdup(pattern);
+    len = strlen(pattern);
+    dir = NULL;
+    filename = NULL;
+  }
+
+  while ((p = memrchr(pat, DIR_SEPARATOR, len)) != NULL) {
+    if (p > pat) {
+      if (*(p - 1) == '\\') {
+        len = p - pat;
+      }
+      else {
+        *p = '\0';
+        dir = pat;
+        filename = p + 1;
+        break;
+      }
+    }
+    else if (p == pat) {
+      dir = "/";
+      filename = p + 1;
+      break;
+    }
+  }
+  if (p == NULL) {
+    filename = pat;
+  }
+
+  ret = sglob_(dir, filename, flags, glob);
+  free(pat);
+  return ret;
+}
+
+
+int
+sglob_(const char *directory, const char *pattern, int flags, sglob_t *glob)
 {
   DIR *d;
   const char *dname = ".";
@@ -62,9 +114,9 @@ sglob(const char *directory, const char *pattern, int flags, sglob_t *glob)
       continue;
 
     if (pattern == NULL || pattern[0] == '\0')
-      sglob_push(glob, directory, ent->d_name);
+      sglob_push(glob, dname, ent->d_name);
     else if (fnmatch(pattern, ent->d_name, FNM_PERIOD) == 0)
-      sglob_push(glob, directory, ent->d_name);
+      sglob_push(glob, dname, ent->d_name);
   }
   closedir(d);
 
@@ -158,9 +210,9 @@ sglob_push(sglob_t *glob, const char *dir, const char *filename)
 
   if (stat(pathname, &sbuf) < 0) {
     free(pathname);
-    return 0;
+    return -1;
   }
-  if (!(sbuf.st_mode & glob->mask)) {
+  if ((sbuf.st_mode & S_IFMT) != glob->mask) {
     free(pathname);
     return 0;
   }
@@ -191,7 +243,9 @@ main(int argc, char *argv[])
   if (argc == 3)
     pattern = argv[2];
 
-  ret = sglob(argv[1], pattern, 0, &g);
+  //g.mask = S_IFSOCK;
+  //ret = sglob(argv[1], SGLOB_MASK, &g);
+  ret = sglob(argv[1], 0, &g);
   printf("sglob() returns %d\n", ret);
   if (ret < 0)
     return -1;

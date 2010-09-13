@@ -47,17 +47,16 @@ struct sglob_ {
 typedef struct sglob_ sglob_t;
 
 /*
- * sglob() -- collect all matching filenames
+ * sglob_() -- collect all matching filenames
  *
- * DIRECTORY should be the starting directory name (can be a relative
- * pathname.)  If DIRECTORY is NULL, "." is assumed.  PATTERN should
- * be a shell-like wildcards.  If PATTERN is NULL, "*" is assumed.
- * You don't need to initialize the GLOB buffer unless speicified.
+ * PATTERN should be a shell-like wildcards.  If PATTERN is NULL, "*"
+ * is assumed.  You don't need to initialize the GLOB buffer unless
+ * speicified.
  *
- * slob() returns zero on success (even if no matching file found), or
+ * sglob() returns zero on success (even if no matching file found), or
  * returns -1 on error.
  *
- * If slob() succeeded, the number of collected files is stored in
+ * If sglob() succeeded, the number of collected files is stored in
  * 'pathc' member, and the actual filenames are stored in 'pathv'
  * member.  Once you finished to use sglob(), you need to call
  * sglobfree() to free all resources allocated by sglob().
@@ -74,10 +73,20 @@ typedef struct sglob_ sglob_t;
  *               'glob'.  sglob() only extract the specified file
  *               type.  If not provided, the 'mask' will be
  *               automatically set to S_IFREG, which represent a
- *               regular type.
+ *               regular type.  Only one file type can be specified.
  */
-extern int sglob(const char *directory, const char *pattern, int flags,
-                 sglob_t *glob);
+extern int sglob(const char *pattern, int flags, sglob_t *glob);
+
+/*
+ * sglob_() -- collect all matching filenames
+ *
+ * sglob_ works like sglob() except it accept DIRECTORY parameter.
+ * DIRECTORY should be the directory name that the sglob_() will search,
+ * whereas PATTERN contains the wildcards.  PATTERN must not contain
+ * a directory component.
+ */
+extern int sglob_(const char *directory, const char *pattern, int flags,
+                  sglob_t *glob);
 
 /*
  * Free all resources allocated by sglob().

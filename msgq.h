@@ -16,9 +16,10 @@
  * 'msgq' is designed to be thread-safe.   It is safe to wait for
  * messages from multiple threads at the same time.
  *
- * It is possbile to send messages from multiple threads at the same time.
- * I don't think that we need a locking mechanism for this.  See msgq_send()
- * for more.
+ * It is possbile to send messages from multiple threads at the same
+ * time.  I don't think that we need a locking mechanism for this.
+ * See msgq_send() for more.  On some Internet article, it is safe if
+ * the packet is less than 4K.
  *
  * It is not safe to call any packet-related function on multiple threads
  * for one packet at the same time.
@@ -33,11 +34,11 @@
  * To compile it, you may need to define _GNU_SOURCE.
  * msgq module needs "-lpthread".
  *
- * $ cc -D_GNU_SOURCE your-source.c msgq.c -lpthread
+ * $ cc -D_GNU_SOURCE your-source.c msgq.c -lpthread -lrt
  *
  * msgq module provides a simple test server, which can be compiled by:
  *
- * $ cc -D_GNU_SOURCE -DTEST_MSGQ msgq.c -lpthread
+ * $ cc -D_GNU_SOURCE -DTEST_MSGQ msgq.c -lpthread -lrt
  *
  * See the comments for main() in msgq.c for using the test server.
  */
@@ -46,11 +47,11 @@
  * If you want broadcasting functions, define MSGQ_BROADCAST to compile it.
  * you need sglob module to buid it.  For example:
  *
- * $ cc -D_GNU_SOURCE -DMSGQ_BROADCAST your-source msgq.c sglob.c -lpthread
+ * $ cc -D_GNU_SOURCE -DMSGQ_BROADCAST your-source msgq.c sglob.c -lpthread -lrt
  *
  * For the test server:
  *
- * $ cc -D_GNU_SOURCE -DMSGQ_BROADCAST -DTEST_MSGQ msgq.c sglob.c -lpthread
+ * $ cc -D_GNU_SOURCE -DMSGQ_BROADCAST -DTEST_MSGQ msgq.c sglob.c -lpthread -lrt
  *
  */
 /* This indirect using of extern "C" { ... } makes Emacs happy */
@@ -63,6 +64,8 @@
 #  define END_C_DECLS
 # endif
 #endif /* BEGIN_C_DECLS */
+
+#include <stddef.h>             /* required for 'size_t' */
 
 BEGIN_C_DECLS
 
@@ -101,10 +104,13 @@ extern void msgq_close(MSGQ *msgq);
 /*
  * Send a packet to the remote.
  *
+ * RECEIVER is the remote address.
+ * PACKET is the packet data, and SIZE is the length of PACKET.
+ *
  * On success, returns zero.  Otherwise -1.
  */
 extern int msgq_send(MSGQ *msgq, const char *receiver,
-                     const struct msgq_packet *packet);
+                     const void *packet, size_t size);
 
 /*
  * Send a string to the remote.
@@ -117,6 +123,21 @@ extern int msgq_send(MSGQ *msgq, const char *receiver,
 extern int msgq_send_string(MSGQ *msgq, const char *receiver,
                             const char *format, ...)
   __attribute__ ((format (printf, 3, 4)));
+
+
+/*
+ * Send a packet to the remote.
+ *
+ * This is the most efficient, the lowest-level function among
+ * msgq_send*() family.
+ *
+ * You need to construct struct msgq_packet by yourself.
+ * You need to fill only 'size' and 'data' members of struct msgq_packet.
+ *
+ * On success, returns zero, otherwise -1.
+ */
+extern int msgq_send_(MSGQ *msgq, const char *receiver,
+               const struct msgq_packet *packet);
 
 
 #ifdef MSGQ_BROADCAST
@@ -134,9 +155,10 @@ extern int msgq_broadcast_wildcard(MSGQ *msgq, const char *pattern,
 /*
  * String version of msgq_broadcast_wildcard().
  */
-extern int msgq_broadcast_string_wildcards(MSGQ *msgq, const char *pattern,
-                                           const char *fmt, ...);
+extern int msgq_broadcast_string_wildcard(MSGQ *msgq, const char *pattern,
+                                          const char *fmt, ...);
 #endif  /* MSGQ_BROADCAST */
+
 
 /*
  * Get a packet from the message queue.
@@ -155,13 +177,44 @@ extern int msgq_broadcast_string_wildcards(MSGQ *msgq, const char *pattern,
  */
 extern struct msgq_packet *msgq_recv(MSGQ *msgq);
 
+
+/*
+ * Get a packet from the message queue or wait for one.
+ *
+ * This is the same as msgq_recv() except this function will wait
+ * until ABSTIME if there is no packet received.   If ABSTIME is NULL,
+ * this function behaves exactly the same as msgq_recv_wait().
+ *
+ * Returns a pointer to the packet if found.
+ * Retruns NULL on timeout (i.e. ABSTIME is not NULL and ABSTIME is passed.)
+ *
+ * Returns NULL on any internal error.  (Sets errno)
+ *
+ * If a UNIX signal is delivered to the caller thread, upon return
+ * from the signal handler this function keeps waiting for the message
+ * until ABSTIME.  If ABSTIME is NULL, the behavior is the same as
+ * msgq_recv_wait().
+ */
+extern struct msgq_packet *msgq_recv_timedwait(MSGQ *msgq,
+                                               struct timespec *abstime);
+
 /*
  * Get a packet from the message queue or wait for one.
  *
  * This is the same as msgq_recv() except this function will wait
  * permanently if there is no packet received.
+ *
+ * Note that this function may return NULL on any internal error with
+ * appropriate errno.  Users of this function should check
+ * the return value in case of NULL.
+ *
+ * If a UNIX signal is delivered to the caller thread, upon return
+ * from the signal handler this function resumes waiting for a message
+ * or, it shall return NULL due to spurious wakeup.
  */
 extern struct msgq_packet *msgq_recv_wait(MSGQ *msgq);
+
+
 
 /*
  * Returns the number of received packets which is not processed.

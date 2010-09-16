@@ -1,0 +1,98 @@
+#!/usr/bin/env python
+
+# $Id$
+
+import os
+import sys
+import subprocess
+import signal
+
+ignore_signals = [signal.SIGINT, signal.SIGTERM, signal.SIGHUP]
+
+def error(status, message):
+    sys.stdout.flush()
+    sys.stderr.write("%s\n" % message)
+    if status != 0:
+        sys.exit(status)
+        
+def cvsroot_set(argv):
+    if len(argv) != 4:
+        error(1, "wrong number of argument(s)")
+
+    dirname = argv[2]
+    newroot = argv[3]
+    
+    cmdline = ["/usr/bin/find"] + [dirname, "-path", "*/CVS/Root"]
+
+    p1 = subprocess.Popen(cmdline, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE)
+    (out, err) = p1.communicate()
+    output = out.split("\n")
+    maxlen = max(map(len, output))
+    
+    for fname in output:
+        if fname == "":
+            continue
+        try:
+            for sig in ignore_signals:
+                signal.signal(sig, signal.SIG_IGN)
+                
+            fd = open(fname, "w")
+            p2 = subprocess.Popen(["/bin/echo", newroot],
+                                  stdout=fd)
+            p2.wait()
+            fd.close()
+        finally:
+            for sig in ignore_signals:
+                signal.signal(sig, signal.SIG_DFL)
+    
+def cvsroot_get(argv):
+    if len(argv) == 2:
+        dirnames = ["."]
+    else:
+        dirnames = argv[2:]
+
+    cmdline = ["/usr/bin/find"] + dirnames + ["-path", "*/CVS/Root"]
+
+    p1 = subprocess.Popen(cmdline, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE)
+    (out, err) = p1.communicate()
+    output = out.split("\n")
+    maxlen = max(map(len, output))
+    for fname in output:
+        if fname == "":
+            continue
+        fd = open(fname, "r")
+        buf = fd.read(-1).strip()
+        print "%*s %s" % (-maxlen, fname, buf)
+
+def usage():
+    print """\
+CVS Helper
+usage: %s COMMAND [OPTION...]
+
+   getroot [PATH...]     Dump the CVSROOT variables in all CVS/Root.
+   setroot PATH NEWROOT  Set all CVS/Root in PATH to NEWROOT
+""" % os.path.basename(sys.argv[0])
+    
+def main():
+    if len(sys.argv) == 1:
+        usage()
+        return 1
+
+    command = sys.argv[1]
+
+    if command == "getroot":
+        cvsroot_get(sys.argv)
+    elif command == "setroot":
+        cvsroot_set(sys.argv)
+    else:
+        usage()
+        return 1
+    
+if __name__ == "__main__":
+    sys.exit(main())
+
+
+
+

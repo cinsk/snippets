@@ -16,6 +16,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <time.h>
+
 #include <error.h>
 
 #include <pthread.h>
@@ -82,7 +84,6 @@ struct msgq_ {
 #define RECVQ_UNLOCK(msgq)      pthread_mutex_unlock(&(msgq)->recv_mutex)
 
 
-
 static int validate_packet(struct msgq_packet *packet, ssize_t len);
 static int msgq_start_receiver(MSGQ *msgq);
 static void *msgq_receiver(void *arg);
@@ -92,6 +93,10 @@ static int bind_anonymous(int fd, char address[]);
 static struct msgq_packet *msgq_copy_packet(const struct msgq_packet *packet);
 static struct msgq_node *msgq_node_create(const char *sender,
                                           const struct msgq_packet *packet);
+
+static int gettime(struct timespec *res);
+static int timespec_subtract(struct timespec *result,
+                             struct timespec *x, struct timespec *y);
 
 static void verror_(const char *kind, int status, int errnum,
                     const char *fmt, va_list ap);
@@ -107,6 +112,24 @@ static void debug_(int errnum, const char *fmt, ...)
 # define DEBUG(err, ...)        ((void)0)
 # define WARN(err, ...)         ((void)0)
 #endif  /* NDEBUG */
+
+
+static int
+gettime(struct timespec *res)
+{
+  int ret;
+#if _POSIX_C_SOURCE < 199309L
+  struct timeval tv;
+  if ((ret = gettimeofday(&tv, NULL)) == 0) {
+    res.tv_sec = tv.tv_sec;
+    res.tv_nsec = tv.tv_usec * 1000;
+  }
+#else
+  ret = clock_gettime(CLOCK_REALTIME, res);
+#endif  /* _POSIX_C_SOURCE */
+
+  return ret;
+}
 
 /*
  * If nonzero, block all signals (using sigfillset()) before creating
@@ -142,7 +165,7 @@ msgq_send_string(MSGQ *msgq, const char *receiver, const char *fmt, ...)
   p->size = ret + 1;
   p->container = NULL;
 
-  ret = msgq_send(msgq, receiver, p);
+  ret = msgq_send_(msgq, receiver, p);
   free(p);
   return ret;
 }
@@ -176,7 +199,7 @@ int
 msgq_pkt_delete(struct msgq_packet *packet)
 {
   struct msgq_node *np;
-  if (!packet->container)
+  if (!packet || !packet->container)
     return -1;
   np = (struct msgq_node *)packet->container;
 
@@ -189,18 +212,25 @@ msgq_pkt_delete(struct msgq_packet *packet)
 }
 
 
+#if 0
 struct msgq_packet *
 msgq_recv_wait(MSGQ *msgq)
 {
   struct elist *p;
   struct msgq_node *np;
+  int ret;
 
   RECVQ_LOCK(msgq);
  again:
   p = edque_pop_front(&msgq->recvq);
   if (!p) {
     DEBUG(0, "msgq_recv_wait: waiting...");
-    pthread_cond_wait(&msgq->recv_cond, &msgq->recv_mutex);
+    ret = pthread_cond_wait(&msgq->recv_cond, &msgq->recv_mutex);
+    if (ret < 0) {
+      RECVQ_UNLOCK(msgq);
+      DEBUG(errno, "msgq_recv_wait: pthread_cond_wait(3) failed");
+      return NULL;
+    }
     DEBUG(0, "msgq_recv_wait: awaken!");
     goto again;
   }
@@ -210,7 +240,132 @@ msgq_recv_wait(MSGQ *msgq)
   np = ELIST_ENTRY(p, struct msgq_node, link);
   return np->packet;
 }
+#endif  /* 0 */
 
+
+struct msgq_packet *
+msgq_recv_wait(MSGQ *msgq)
+{
+  return msgq_recv_timedwait(msgq, NULL);
+}
+
+
+struct msgq_packet *
+msgq_recv_timedwait(MSGQ *msgq, struct timespec *abstime)
+{
+  struct elist *p;
+  struct msgq_node *np;
+  struct timespec now, diff;
+  int ret;
+
+  RECVQ_LOCK(msgq);
+
+  while (1) {
+    p = edque_pop_front(&msgq->recvq);
+    if (p)
+      break;
+
+    DEBUG(0, "msgq_recv_wait: waiting...");
+    if (abstime) {
+      ret = pthread_cond_timedwait(&msgq->recv_cond, &msgq->recv_mutex,
+                                   abstime);
+      DEBUG(errno, "msgq_recv_wait: pthread_cond_timedwait(3) failed");
+    }
+    else {
+      ret = pthread_cond_wait(&msgq->recv_cond, &msgq->recv_mutex);
+      DEBUG(errno, "msgq_recv_wait: pthread_cond_wait(3) failed");
+    }
+    DEBUG(0, "msgq_recv_wait: awaken!");
+
+    if (ret != 0) {
+      errno = ret;
+      goto just_end;            /* error or timeout */
+    }
+
+    if (abstime) {
+      /* On spurious wakeup, if ABSTIME is given, and it is timed out,
+       * then escape the loop. */
+      gettime(&now);
+      if (timespec_subtract(&diff, &now, abstime) == 0)
+        goto just_end;          /* timeout */
+    }
+  }
+
+  msgq->recvs--;
+  RECVQ_UNLOCK(msgq);
+
+  np = ELIST_ENTRY(p, struct msgq_node, link);
+  return np->packet;
+
+ just_end:
+  /* You should not call any function that possibly modify 'errno' here. */
+
+  /* flow comes here if conditional waiting function failed, or if
+   * timed-out. */
+
+  RECVQ_UNLOCK(msgq);
+  return NULL;
+}
+
+
+#if 0
+/* Subtract the `struct timeval' values X and Y, storing the result in
+ * RESULT.  Return 1 if the difference is negative, otherwise 0.  */
+static int
+timeval_subtract(struct timeval *result, struct timeval *x, struct timeval *y)
+{
+  /* Perform the carry for the later subtraction by updating y. */
+  if (x->tv_usec < y->tv_usec) {
+    int nsec = (y->tv_usec - x->tv_usec) / 1000000 + 1;
+    y->tv_usec -= 1000000 * nsec;
+    y->tv_sec += nsec;
+  }
+  if (x->tv_usec - y->tv_usec > 1000000) {
+    int nsec = (x->tv_usec - y->tv_usec) / 1000000;
+    y->tv_usec += 1000000 * nsec;
+    y->tv_sec -= nsec;
+  }
+
+  /* Compute the time remaining to wait.
+     tv_usec is certainly positive. */
+  result->tv_sec = x->tv_sec - y->tv_sec;
+  result->tv_usec = x->tv_usec - y->tv_usec;
+
+  /* Return 1 if result is negative. */
+  return x->tv_sec < y->tv_sec;
+}
+#endif  /* 0 */
+
+/*
+ * Subtract the `struct timespec' values X and Y, storing the result in
+ * RESULT.  Return 1 if the difference is negative, otherwise 0.
+ *
+ * Stealed from GLIBC manual.
+ */
+static int
+timespec_subtract(struct timespec *result,
+                  struct timespec *x, struct timespec *y)
+{
+  /* Perform the carry for the later subtraction by updating y. */
+  if (x->tv_nsec < y->tv_nsec) {
+    int nsec = (y->tv_nsec - x->tv_nsec) / 1000000000 + 1;
+    y->tv_nsec -= 1000000000 * nsec;
+    y->tv_sec += nsec;
+  }
+  if (x->tv_nsec - y->tv_nsec > 1000000000) {
+    int nsec = (x->tv_nsec - y->tv_nsec) / 1000000000;
+    y->tv_nsec += 1000000000 * nsec;
+    y->tv_sec -= nsec;
+  }
+
+  /* Compute the time remaining to wait.
+     tv_usec is certainly positive. */
+  result->tv_sec = x->tv_sec - y->tv_sec;
+  result->tv_nsec = x->tv_nsec - y->tv_nsec;
+
+  /* Return 1 if result is negative. */
+  return x->tv_sec < y->tv_sec;
+}
 
 struct msgq_packet *
 msgq_recv(MSGQ *msgq)
@@ -233,12 +388,34 @@ msgq_recv(MSGQ *msgq)
 
 
 int
-msgq_send(MSGQ *msgq, const char *receiver, const struct msgq_packet *packet)
+msgq_send(MSGQ *msgq, const char *receiver,
+          const void *packet, size_t size)
+{
+  struct msgq_packet *p;
+  int ret;
+
+  p = malloc(sizeof(*p) + size);
+  if (!p)
+    return -1;
+
+  p->container = 0;
+  p->size = size;
+  memcpy(p->data, packet, size);
+
+  ret = msgq_send_(msgq, receiver, p);
+  free(p);
+
+  return ret;
+}
+
+
+int
+msgq_send_(MSGQ *msgq, const char *receiver, const struct msgq_packet *packet)
 {
   struct sockaddr_un addr;
   ssize_t ret;
 
-  addr.sun_family = AF_UNIX;
+  addr.sun_family = AF_LOCAL;
   strncpy(addr.sun_path, receiver, sizeof(addr.sun_path) - 1);
 
   /* TODO: lock?? */
@@ -257,8 +434,8 @@ msgq_send(MSGQ *msgq, const char *receiver, const struct msgq_packet *packet)
 
 #ifdef MSGQ_BROADCAST
 int
-msgq_broadcast_string_wildcards(MSGQ *msgq, const char *pattern,
-                                const char *fmt, ...)
+msgq_broadcast_string_wildcard(MSGQ *msgq, const char *pattern,
+                               const char *fmt, ...)
 {
   va_list ap;
   int ret;
@@ -297,7 +474,7 @@ msgq_broadcast_wildcard(MSGQ *msgq, const char *pattern,
 
   for (i = 0; i < gbuf.pathc; i++) {
     DEBUG(0, "msgq_broadcast_wildcard: to |%s|...", gbuf.pathv[i]);
-    msgq_send(msgq, gbuf.pathv[i], packet);
+    msgq_send_(msgq, gbuf.pathv[i], packet);
   }
 
   sglobfree(&gbuf);
@@ -420,7 +597,7 @@ msgq_get_listener(MSGQ *msgq, const char *address)
 
   fd = socket(AF_LOCAL, SOCK_DGRAM, 0);
   if (fd < 0) {
-    WARN(errno, "socket() failed");
+    WARN(errno, "socket(2) failed");
     goto err;
   }
 
@@ -438,7 +615,7 @@ msgq_get_listener(MSGQ *msgq, const char *address)
       unlink(address);
     }
 
-    addr.sun_family = AF_UNIX;
+    addr.sun_family = AF_LOCAL;
     strncpy(addr.sun_path, address, UNIX_PATH_MAX - 1);
 
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
@@ -470,12 +647,12 @@ bind_anonymous(int fd, char address[])
     strcpy(tmpname, MSGQ_TMP_TEMPLATE);
     tfd = mkstemp(tmpname);
     if (tfd < 0) {
-      WARN(errno, "mkstemp() failed");
+      WARN(errno, "mkstemp(3) failed");
       break;
     }
     close(tfd);
 
-    addr.sun_family = AF_UNIX;
+    addr.sun_family = AF_LOCAL;
     strcpy(addr.sun_path, tmpname);
 
     unlink(tmpname);
@@ -526,9 +703,10 @@ msgq_start_receiver(MSGQ *msgq)
 
   pthread_sigmask(SIG_SETMASK, &cur, NULL);
 
-  if (pthread_create(&msgq->receiver, NULL,
-                     msgq_receiver, (void *)msgq) != 0) {
-    WARN(errno, "pthread_create() failed");
+  if ((ret = pthread_create(&msgq->receiver, NULL,
+                            msgq_receiver, (void *)msgq)) != 0) {
+    WARN(ret, "pthread_create(3) failed");
+    errno = ret;
     ret = -1;
   }
   pthread_sigmask(SIG_SETMASK, &old, NULL);
@@ -573,7 +751,7 @@ msgq_receiver(void *arg)
     len = recvfrom(fd, (void *)msgq->pkbuf, MSGQ_MSG_MAX, MSG_WAITALL,
                    (struct sockaddr *)&addr, &addrlen);
     if (len < 0) {
-      WARN(errno, "recvfrom() failed");
+      WARN(errno, "recvfrom(2) failed");
       if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
         continue;
       break;
@@ -749,22 +927,34 @@ debug_(int errnum, const char *fmt, ...)
  * If the line(packet) is shorter than 8, the server will ignore that
  * packet.
  *
- * $ socat UNIX-SENDTO:/tmp/msgq,bind=/tmpmsgq-cli STDIO
+ * $ socat UNIX-SENDTO:/tmp/msgq,bind=/tmp/msgq-cli STDIO
  * 00000000hello, world
  */
 int
-main(void)
+main(int argc, char *argv[])
 {
   MSGQ *msgq;
   struct msgq_packet *packet;
   int cond = 1;
+  struct timespec ts;
 
   msgq = msgq_open("/tmp/msgq");
 
   while (cond) {
-    packet = msgq_recv_wait(msgq);
+    packet = NULL;
+    if (argc > 1) {
+      clock_gettime(CLOCK_REALTIME, &ts);
+      ts.tv_sec += atoi(argv[1]);
+      ts.tv_nsec = 0;
 
-    {
+      printf("Waiting for %d second(s)...\n", atoi(argv[1]));
+
+      packet = msgq_recv_timedwait(msgq, &ts);
+    }
+    else
+      packet = msgq_recv_wait(msgq);
+
+    if (packet) {
       int len = strlen(packet->data);
       if (packet->data[len - 1] == '\n')
         packet->data[len - 1] = '\0';
@@ -779,8 +969,9 @@ main(void)
 
       if (strcmp(packet->data, "quit") == 0)
         cond = 0;
+
+      msgq_pkt_delete(packet);
     }
-    msgq_pkt_delete(packet);
   }
 
   msgq_close(msgq);

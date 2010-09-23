@@ -98,6 +98,7 @@ static int gettime(struct timespec *res);
 static int timespec_subtract(struct timespec *result,
                              struct timespec *x, struct timespec *y);
 
+#ifndef NDEBUG
 static void verror_(const char *kind, int status, int errnum,
                     const char *fmt, va_list ap);
 static void warning_(int errnum, const char *fmt, ...)
@@ -105,7 +106,6 @@ static void warning_(int errnum, const char *fmt, ...)
 static void debug_(int errnum, const char *fmt, ...)
   __attribute__((format(printf, 2, 3)));
 
-#ifndef NDEBUG
 # define DEBUG(err, ...)        debug_(err, __VA_ARGS__)
 # define WARN(err, ...)         warning_(err, __VA_ARGS__)
 #else
@@ -875,6 +875,7 @@ msgq_node_create(const char *sender, const struct msgq_packet *packet)
 }
 
 
+#ifndef NDEBUG
 static void
 verror_(const char *kind, int status, int errnum, const char *fmt, va_list ap)
 {
@@ -911,6 +912,7 @@ debug_(int errnum, const char *fmt, ...)
   verror_("debug", 0, errnum, fmt, ap);
   va_end(ap);
 }
+#endif  /* NDEBUG */
 
 
 #ifdef TEST_MSGQ

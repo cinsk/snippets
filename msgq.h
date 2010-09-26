@@ -102,7 +102,7 @@ extern MSGQ *msgq_open(const char *address);
  * Currently, once msgq_close() is called, all queued packets that are not
  * yet passed to the user are destroyed.
  */
-extern void msgq_close(MSGQ *msgq);
+extern int msgq_close(MSGQ *msgq);
 
 /*
  * Send a packet to the remote.
@@ -166,8 +166,9 @@ extern int msgq_broadcast_string_wildcard(MSGQ *msgq, const char *pattern,
 /*
  * Get a packet from the message queue.
  *
- * If there is a packet received, msgq_recv() returns immediately.
- * Otherwise, returns NULL.
+ * If there is a packet received, msgq_recv() returns immediately.  If
+ * none available, it blocks until it receives.  On error, it returns
+ * NULL.
  *
  * The returned packet is in the struct msgq_packet type.  In the
  * returned value, the 'data' member contains the actual packet data.
@@ -177,6 +178,10 @@ extern int msgq_broadcast_string_wildcard(MSGQ *msgq, const char *pattern,
  *
  * To get the sender, you may call msgq_pkt_sender().  Once the packet
  * is no longer used, you should call msgq_pkt_delete().
+ *
+ * When a caller thread is blocked via this function, if another
+ * thread calls msgq_close(), this function stop waiting and returns
+ * NULL immediately.
  */
 extern struct msgq_packet *msgq_recv(MSGQ *msgq);
 
@@ -197,6 +202,10 @@ extern struct msgq_packet *msgq_recv(MSGQ *msgq);
  * from the signal handler this function keeps waiting for the message
  * until ABSTIME.  If ABSTIME is NULL, the behavior is the same as
  * msgq_recv_wait().
+ *
+ * When a caller thread is blocked via this function, if another
+ * thread calls msgq_close(), this function stop waiting and returns
+ * NULL immediately.
  */
 extern struct msgq_packet *msgq_recv_timedwait(MSGQ *msgq,
                                                struct timespec *abstime);

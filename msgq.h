@@ -72,6 +72,9 @@ BEGIN_C_DECLS
 #define MSGQ_TMP_TEMPLATE       "/tmp/msgq-XXXXXX"
 #define MSGQ_MSG_MAX    4096
 
+#define MSGQ_PERM_DEFAULT       (S_IRUSR | S_IWUSR | S_IXUSR | \
+                                 S_IRGRP | S_IROTH)
+
 struct msgq_packet {
   void *container;              /* internal purpose only.  Do not change. */
   size_t size;                  /* size of data in bytes */

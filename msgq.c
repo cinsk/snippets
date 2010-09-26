@@ -592,7 +592,8 @@ msgq_get_listener(MSGQ *msgq, const char *address)
   struct stat sbuf;
   struct sockaddr_un addr;
   int fd = -1;
-
+  mode_t oldmask;
+  socklen_t size;
   assert(msgq->fd == -1);
 
   fd = socket(AF_LOCAL, SOCK_DGRAM, 0);
@@ -617,14 +618,29 @@ msgq_get_listener(MSGQ *msgq, const char *address)
 
     addr.sun_family = AF_LOCAL;
     strncpy(addr.sun_path, address, UNIX_PATH_MAX - 1);
+    size = offsetof(struct sockaddr_un, sun_path) + strlen(addr.sun_path);
 
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    if (bind(fd, (struct sockaddr *)&addr, size) < 0) {
       WARN(errno, "bind(2) failed");
       goto err;
     }
     strncpy(msgq->address, address, UNIX_PATH_MAX - 1);
+
+    /*
+     * I don't know why, but on my Linux system(Gentoo 2.6.32, glib
+     * 2.11.2), fchmod() on socket fd has no effect without any error.
+     * chmod(2) seems to work though.
+     */
+    oldmask = umask(0);
+    if (chmod(address, MSGQ_PERM_DEFAULT) < 0) {
+    //if (fchmod(fd, MSGQ_PERM_DEFAULT) < 0) {
+      ;          /* ignore any error */
+    }
+    umask(oldmask);
   }
+
   msgq->fd = fd;
+  fsync(fd);
   return 0;
 
  err:
@@ -690,9 +706,10 @@ msgq_start_receiver(MSGQ *msgq)
   };
   int i;
 
-  pthread_sigmask(SIG_SETMASK, NULL, &old);
-
+  sigemptyset(&old);
   sigemptyset(&cur);
+
+  pthread_sigmask(SIG_SETMASK, NULL, &old);
 
   if (!block_all_signals)
     for (i = 0; i < sizeof(blocksigs) / sizeof(int); i++) {

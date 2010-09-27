@@ -15,9 +15,6 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
-#ifdef NONBLOCK
-#include <fcntl.h>
-#endif
 #include <time.h>
 
 #include <error.h>
@@ -56,6 +53,11 @@ struct msgq_node {
 };
 
 
+#define MSGQ_STAT_NONE  -1
+#define MSGQ_STAT_INIT  0
+#define MSGQ_STAT_ALIVE 1
+#define MSGQ_STAT_DEAD  2
+
 /*
  * Currently, 'recv_mutex' is the only mutex that struct msgq_ provided.
  * Since we do not have any other queue except the 'recvq' member,  one
@@ -76,25 +78,19 @@ struct msgq_ {
   struct elist recvq;           /* queue for received messages */
   size_t recvs;                 /* number of packets in recvq */
 
-#ifdef NONBLOCK
-  int keepalive;                /* thread will terminate if zero */
-  pthread_mutex_t live_mutex;   /* for accessing 'keepalive' member */
-#endif
 
   pthread_cond_t recv_cond;     /* condition for waiting for incoming msg */
   pthread_mutex_t recv_mutex;
 
-  int receiver_dead;            /* nonzero if 'receiver' is terminated */
+  pthread_cond_t stat_cond;
+  //pthread_mutex_t stat_mutex;
+  int receiver_status;          /* receiver status, MSGQ_STAT_* */
 
   pthread_t receiver;           /* thread for receiving messages */
 };
 
-#ifdef NONBLOCK
-#define ALIVE_LOCK(msgq)        LOCK(&(msgq)->live_mutex, "live")
-#define ALIVE_UNLOCK(msgq)      UNLOCK(&(msgq)->live_mutex, "live")
-#endif
-#define RECVQ_LOCK(msgq)        LOCK(&(msgq)->recv_mutex, "recv")
-#define RECVQ_UNLOCK(msgq)      UNLOCK(&(msgq)->recv_mutex, "recv")
+#define MSGQ_LOCK(msgq)        LOCK(&(msgq)->recv_mutex, "recv")
+#define MSGQ_UNLOCK(msgq)      UNLOCK(&(msgq)->recv_mutex, "recv")
 
 
 static int validate_packet(struct msgq_packet *packet, ssize_t len);
@@ -211,9 +207,9 @@ msgq_message_count(MSGQ *msgq)
 {
   int ret;
 
-  RECVQ_LOCK(msgq);
+  MSGQ_LOCK(msgq);
   ret = msgq->recvs;
-  RECVQ_UNLOCK(msgq);
+  MSGQ_UNLOCK(msgq);
 
   return ret;
 }
@@ -247,35 +243,55 @@ msgq_pkt_delete(struct msgq_packet *packet)
 }
 
 
-#if 0
-struct msgq_packet *
-msgq_recv_wait(MSGQ *msgq)
+/*
+ * Wait for the status change of the listener thread.
+ *
+ * The internal listener thread changes its status from
+ * MSGQ_STAT_INIT, then MSGQ_STAT_ALIVE to MSGQ_STAT_DEAD.  This
+ * function blocks the caller until the listener status is reached to
+ * STATUS.
+ *
+ * If the current listener status is the same as STATUS or, STATUS is
+ * already passed, this function returns immediately.
+ *
+ * This function returns the current status of the listener thread.
+ * On error, it returns -1, and set 'errno' accordingly.
+ *
+ * If MSGQ_STAT_NONE is used for STATUS, this function returns
+ * immediately with the current status without blocking.
+ */
+static int
+msgq_wait(MSGQ *msgq, int status)
 {
-  struct elist *p;
-  struct msgq_node *np;
+  int saved_errno = 0;
   int ret;
 
-  RECVQ_LOCK(msgq);
- again:
-  p = edque_pop_front(&msgq->recvq);
-  if (!p) {
-    DEBUG(0, "msgq_recv_wait: waiting...");
-    ret = pthread_cond_wait(&msgq->recv_cond, &msgq->recv_mutex);
-    if (ret != 0) {
-      RECVQ_UNLOCK(msgq);
-      DEBUG(ret, "msgq_recv_wait: pthread_cond_wait(3) failed");
-      return NULL;
-    }
-    DEBUG(0, "msgq_recv_wait: awaken!");
-    goto again;
-  }
-  msgq->recvs--;
-  RECVQ_UNLOCK(msgq);
+  assert(status >= MSGQ_STAT_NONE && status <= MSGQ_STAT_DEAD);
 
-  np = ELIST_ENTRY(p, struct msgq_node, link);
-  return np->packet;
+  MSGQ_LOCK(msgq);
+  if (status == MSGQ_STAT_NONE)
+    status = msgq->receiver_status;
+  else if (status <= msgq->receiver_status)
+    status = msgq->receiver_status;
+  else {
+    while (msgq->receiver_status < status) {
+      ret = pthread_cond_wait(&msgq->stat_cond, &msgq->recv_mutex);
+      if (ret != 0) {
+        saved_errno = ret;
+        break;
+      }
+    }
+    status = msgq->receiver_status;
+  }
+  MSGQ_UNLOCK(msgq);
+
+  if (saved_errno) {
+    errno = saved_errno;
+    return -1;
+  }
+
+  return status;
 }
-#endif  /* 0 */
 
 
 struct msgq_packet *
@@ -293,24 +309,16 @@ msgq_recv_timedwait(MSGQ *msgq, struct timespec *abstime)
   struct timespec now, diff;
   int ret;
 
-#ifdef NONBLOCK
-  ALIVE_LOCK(msgq);
-  if (!msgq->keepalive) {
-    ALIVE_UNLOCK(msgq);
-    return NULL;
-  }
-  ALIVE_UNLOCK(msgq);
-#endif
-
-  RECVQ_LOCK(msgq);
+  MSGQ_LOCK(msgq);
 
   while (1) {
     p = edque_pop_front(&msgq->recvq);
     if (p)
       break;
 
-    if (msgq->receiver_dead) {
+    if (msgq->receiver_status == MSGQ_STAT_DEAD) {
       WARN(0, "msgq_recv_wait: lister is dead. no more packet available!");
+      errno = EADDRNOTAVAIL;
       goto just_end;
     }
 
@@ -328,6 +336,8 @@ msgq_recv_timedwait(MSGQ *msgq, struct timespec *abstime)
     }
     DEBUG(0, "msgq_recv_wait: awaken!");
 
+    /* The mutex is locked state. */
+
     if (ret != 0) {
       errno = ret;
       goto just_end;            /* error or timeout */
@@ -340,19 +350,10 @@ msgq_recv_timedwait(MSGQ *msgq, struct timespec *abstime)
       if (timespec_subtract(&diff, &now, abstime) == 0)
         goto just_end;          /* timeout */
     }
-
-#ifdef NONBLOCK
-    ALIVE_LOCK(msgq);
-    if (!msgq->keepalive) {
-      ALIVE_UNLOCK(msgq);
-      goto just_end;            /* listener was dead */
-    }
-    ALIVE_UNLOCK(msgq);
-#endif
   }
 
   msgq->recvs--;
-  RECVQ_UNLOCK(msgq);
+  MSGQ_UNLOCK(msgq);
 
   np = ELIST_ENTRY(p, struct msgq_node, link);
   return np->packet;
@@ -363,7 +364,7 @@ msgq_recv_timedwait(MSGQ *msgq, struct timespec *abstime)
   /* flow comes here if conditional waiting function failed, or if
    * timed-out. */
 
-  RECVQ_UNLOCK(msgq);
+  MSGQ_UNLOCK(msgq);
   return NULL;
 }
 
@@ -433,14 +434,14 @@ msgq_recv(MSGQ *msgq)
   struct elist *p;
   struct msgq_node *np;
 
-  RECVQ_LOCK(msgq);
+  MSGQ_LOCK(msgq);
   p = edque_pop_front(&msgq->recvq);
   if (!p) {
-    RECVQ_UNLOCK(msgq);
+    MSGQ_UNLOCK(msgq);
     return NULL;
   }
   msgq->recvs--;
-  RECVQ_UNLOCK(msgq);
+  MSGQ_UNLOCK(msgq);
 
   np = ELIST_ENTRY(p, struct msgq_node, link);
   return np->packet;
@@ -572,14 +573,6 @@ msgq_open(const char *address)
   pthread_mutexattr_init(&attr);
   pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
 
-#ifdef NONBLOCK
-  if ((saved_errno = pthread_mutex_init(&p->live_mutex, &attr)) != 0) {
-    WARN(errno, "pthread_mutex_init(3) failed");
-    pthread_mutexattr_destroy(&attr);
-    goto err_free;
-  }
-#endif
-
   if ((saved_errno = pthread_mutex_init(&p->recv_mutex, &attr)) != 0) {
     WARN(errno, "pthread_mutex_init(3) failed");
     pthread_mutexattr_destroy(&attr);
@@ -589,17 +582,17 @@ msgq_open(const char *address)
 
   if ((saved_errno = pthread_cond_init(&p->recv_cond, NULL)) != 0) {
     WARN(errno, "pthread_cond_init(3) failed");
+    goto err_cond_recv;
+  }
+
+  if ((saved_errno = pthread_cond_init(&p->stat_cond, NULL)) != 0) {
+    WARN(errno, "pthread_cond_init(3) failed");
     goto err_cond;
   }
 
-#ifdef NONBLOCK
-  ALIVE_LOCK(p);
-  p->keepalive = 1;
-  ALIVE_UNLOCK(p);
-#endif
-  p->receiver_dead = 0;
+  MSGQ_LOCK(p);
+  p->receiver_status = MSGQ_STAT_INIT;
 
-  RECVQ_LOCK(p);
   if (msgq_get_listener(p, address) < 0) {
     saved_errno = errno;
     goto err;
@@ -608,22 +601,21 @@ msgq_open(const char *address)
     saved_errno = errno;
     goto err;
   }
-  RECVQ_UNLOCK(p);
+  MSGQ_UNLOCK(p);
 
+  msgq_wait(p, MSGQ_STAT_ALIVE);
   return p;
 
  err:
-  pthread_cond_destroy(&p->recv_cond);
+  pthread_cond_destroy(&p->stat_cond);
  err_cond:
-  RECVQ_UNLOCK(p);
+  pthread_cond_destroy(&p->recv_cond);
+ err_cond_recv:
+  MSGQ_UNLOCK(p);
   if (p->fd >= 0)
     close(p->fd);
   pthread_mutex_destroy(&p->recv_mutex);
  err_free_livemutex:
-#ifdef NONBLOCK
-  pthread_mutex_destroy(&p->live_mutex);
-#endif
- err_free:
   if (p->pkbuf)
     free(p->pkbuf);
   if (p)
@@ -649,12 +641,6 @@ msgq_close(MSGQ *msgq)
   }
 #endif  /* 0 */
 
-#ifdef NONBLOCK
-  ALIVE_LOCK(msgq);
-  msgq->keepalive = 0;
-  ALIVE_UNLOCK(msgq);
-#endif
-
   msgq_send_string(msgq, msgq->address, "shutdown");
 
   if ((saved_errno = pthread_join(msgq->receiver, &retval)) != 0) {
@@ -663,7 +649,7 @@ msgq_close(MSGQ *msgq)
     return -1;
   }
 
-  RECVQ_LOCK(msgq);
+  MSGQ_LOCK(msgq);
 
   if (msgq->fd >= 0) {
     close(msgq->fd);
@@ -687,12 +673,9 @@ msgq_close(MSGQ *msgq)
     free(np);
   }
 
-  RECVQ_UNLOCK(msgq);
+  MSGQ_UNLOCK(msgq);
 
   /* TODO: possible race condition? */
-#ifdef NONBLOCK
-  pthread_mutex_destroy(&msgq->live_mutex);
-#endif
   pthread_mutex_destroy(&msgq->recv_mutex);
   free(msgq);
 
@@ -705,7 +688,6 @@ msgq_get_listener(MSGQ *msgq, const char *address)
 {
   struct stat sbuf;
   struct sockaddr_un addr;
-  int flags;
   int fd = -1;
   mode_t oldmask;
   socklen_t size;
@@ -755,19 +737,6 @@ msgq_get_listener(MSGQ *msgq, const char *address)
     }
     umask(oldmask);
   }
-
-#ifdef NONBLOCK
-  flags = fcntl(fd, F_GETFL);
-  if (flags == -1) {
-    WARN(errno, "fcntl(2) F_GETFL failed");
-    goto err;
-  }
-  flags |= O_NONBLOCK;
-  if (fcntl(fd, F_SETFL, flags) == -1) {
-    WARN(errno, "fcntl(2) F_SETFL failed");
-    goto err;
-  }
-#endif
 
   msgq->fd = fd;
   fsync(fd);
@@ -836,7 +805,7 @@ msgq_start_receiver(MSGQ *msgq)
     SIGSTOP,
     SIGTSTP,
   };
-  int i;
+  size_t i;
   int saved_errno;
 
   sigemptyset(&old);
@@ -853,18 +822,12 @@ msgq_start_receiver(MSGQ *msgq)
 
   pthread_sigmask(SIG_SETMASK, &cur, NULL);
 
-#ifdef NONBLOCK
-  ALIVE_LOCK(msgq);
-#endif
   if ((ret = pthread_create(&msgq->receiver, NULL,
                             msgq_receiver, (void *)msgq)) != 0) {
     WARN(ret, "pthread_create(3) failed");
     saved_errno = ret;
     ret = -1;
   }
-#ifdef NONBLOCK
-  ALIVE_UNLOCK(msgq);
-#endif
 
   pthread_sigmask(SIG_SETMASK, &old, NULL);
 
@@ -873,6 +836,7 @@ msgq_start_receiver(MSGQ *msgq)
 }
 
 
+#if 0
 static void
 msgq_receiver_cleaner(void *arg)
 {
@@ -881,6 +845,7 @@ msgq_receiver_cleaner(void *arg)
   DEBUG(0, "receiver: cleanup handler started");
   pthread_mutex_unlock(&msgq->recv_mutex);
 }
+#endif  /* 0 */
 
 
 static void *
@@ -895,32 +860,16 @@ msgq_receiver(void *arg)
   MSGQ *msgq = (MSGQ *)arg;
 
   DEBUG(0, "receiver: thread started");
-  //pthread_cleanup_push(msgq_receiver_cleaner, arg);
 
-#ifdef NONBLOCK
-  ALIVE_LOCK(msgq);
+  MSGQ_LOCK(msgq);
+  msgq->receiver_status = MSGQ_STAT_ALIVE;
+  pthread_cond_broadcast(&msgq->stat_cond);
+
   fd = msgq->fd;
-  ALIVE_UNLOCK(msgq);
-#else
-  RECVQ_LOCK(msgq);
-  fd = msgq->fd;
-  RECVQ_UNLOCK(msgq);
-#endif
+  MSGQ_UNLOCK(msgq);
 
   while (1) {
-#ifdef NONBLOCK
-    ALIVE_LOCK(msgq);
-    if (!msgq->keepalive) {
-      ALIVE_UNLOCK(msgq);
-
-      RECVQ_LOCK(msgq);
-      pthread_cond_broadcast(&msgq->recv_cond);
-      RECVQ_UNLOCK(msgq);
-      break;
-    }
-    ALIVE_UNLOCK(msgq);
-#endif
-    pthread_testcancel();
+    //pthread_testcancel();
 
     DEBUG(0, "receiver: waiting for incoming packet from fd(%d)", fd);
     addrlen = sizeof(addr);
@@ -928,11 +877,7 @@ msgq_receiver(void *arg)
                    (struct sockaddr *)&addr, &addrlen);
     if (len < 0) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-#ifdef NONBLOCK
-        /* I do not know which is better; to call sched_yield() or to
-         * sleep a short period of time. */
-        sched_yield();
-#endif
+        /* Since 'fd' is blocking socket, we will not get these errors */
         continue;
       }
       else {
@@ -962,7 +907,7 @@ msgq_receiver(void *arg)
       continue;
     }
 
-    RECVQ_LOCK(msgq);
+    MSGQ_LOCK(msgq);
     edque_push_back(&msgq->recvq, &np->link);
     msgq->recvs++;
     DEBUG(0, "receiver: accepting a packet.");
@@ -976,17 +921,18 @@ msgq_receiver(void *arg)
       pthread_cond_signal(&msgq->recv_cond);
     }
 
-    RECVQ_UNLOCK(msgq);
+    MSGQ_UNLOCK(msgq);
   }
 
   //pthread_cleanup_pop(1);
 
   shutdown(fd, SHUT_RD);
 
-  RECVQ_LOCK(msgq);
-  msgq->receiver_dead = 1;
+  MSGQ_LOCK(msgq);
+  msgq->receiver_status = MSGQ_STAT_DEAD;
   pthread_cond_broadcast(&msgq->recv_cond);
-  RECVQ_UNLOCK(msgq);
+  pthread_cond_broadcast(&msgq->stat_cond);
+  MSGQ_UNLOCK(msgq);
 
   /* If you ever want to change from UNIX domain socket to UDP/TCP You
    * may need to change the way it calls shutdown()/close()
@@ -1008,14 +954,14 @@ validate_packet(struct msgq_packet *packet, ssize_t len)
 {
   ssize_t estimated;
 
-  estimated = len - offsetof(struct msgq_packet, data);
+  estimated = len - (ssize_t)offsetof(struct msgq_packet, data);
 
   if (estimated < 0) {          /* wrong packet? */
     /* The received bytes is too small even for struct msgq_packet itself. */
     return -1;
   }
 
-  if (estimated < packet->size) /* correct wrong sized packet */
+  if (estimated < (ssize_t)packet->size) /* correct wrong sized packet */
     packet->size = estimated;
 
   packet->container = 0;

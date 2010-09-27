@@ -81,7 +81,7 @@ struct msgq_packet {
   char data[0];
 };
 
-//struct msgq_;
+struct msgq_;
 typedef struct msgq_ MSGQ;
 
 /*
@@ -93,6 +93,10 @@ typedef struct msgq_ MSGQ;
  *
  * On error, msgq_open() returns NULL.  Otherwise, a valid pointer to MSGQ
  * type will be returned.
+ *
+ * This function will not return until the listening thread is
+ * running.  Thus, once msgq_open() returns, you may directly call any
+ * of msgq_recv*().
  */
 extern MSGQ *msgq_open(const char *address);
 
@@ -101,8 +105,12 @@ extern MSGQ *msgq_open(const char *address);
  *
  * Currently, once msgq_close() is called, all queued packets that are not
  * yet passed to the user are destroyed.
+ *
+ * For safety, it is recommended to call msgq_close() in the same
+ * thread that called msgq_open().
  */
 extern int msgq_close(MSGQ *msgq);
+
 
 /*
  * Send a packet to the remote.
@@ -164,91 +172,87 @@ extern int msgq_broadcast_string_wildcard(MSGQ *msgq, const char *pattern,
 
 
 /*
- * Get a packet from the message queue.
+ * Get a packet from the message.
  *
- * If there is a packet received, msgq_recv() returns immediately.  If
- * none available, it blocks until it receives.  On error, it returns
- * NULL.
+ * msgq_recv() return NULL immediately if there is no packet.
+ * msgq_recv_wait() waits forever until new packet is arrived,
+ * msgq_recv_timedwait() wait until ABSTIME passed or until new packet
+ * is arrived.
+ *
+ * msgq_recv_wait(queue) is the same as msgq_recv_timedwait(msgq, NULL).
+ *
+ * If there is a packet received, these functions return immediately.
+ * If none available, msgq_recv_wait() and msgq_recv_timedwait()
+ * blocks until it receives or the time specified in ABSTIME is
+ * passed.  On error, it returns NULL.
  *
  * The returned packet is in the struct msgq_packet type.  In the
  * returned value, the 'data' member contains the actual packet data.
- * Its length is specified in 'size' member.  You may change the
+ * Its length is specified in 'size' member.  You may modify the
  * packet data on the fly.  However, you MUST not change its
  * 'container' member, which is used internally.
  *
- * To get the sender, you may call msgq_pkt_sender().  Once the packet
- * is no longer used, you should call msgq_pkt_delete().
+ * To get the address of the packet sender, you may call
+ * msgq_pkt_sender() on the returned pointer.  Once the packet is no
+ * longer used, you should call msgq_pkt_delete() to release it.
  *
- * When a caller thread is blocked via this function, if another
- * thread calls msgq_close(), this function stop waiting and returns
- * NULL immediately.
+ * Return a pointer to the packet if found.
+ *
+ * msgq_recv_wait() and msgq_recv_timedwait() returns NULL on
+ * following cases:
+ *
+ *  - on timeout (i.e. ABSTIME is not NULL and ABSTIME is passed.)
+ *    (Sets 'errno' to ETIMEOUT)
+ *
+ *  - if the internal listener thread is dead. (e.g. another
+ *    thread calls msgq_close().)  (Sets 'errno' to EADDRNOTAVAIL)
+ *
+ *  - on any internal error.  This should not happen. (Sets 'errno'
+ *    accordingly.)
+ *
+ * Theoretically, msgq_recv() will never fail. (Thus no effect on
+ * 'errno')
+ *
+ * If a UNIX signal is delivered to the caller thread, upon return
+ * from the signal handler msgq_recv_wait() and msgq_recv_timedwait()
+ * functions keep waiting for the message until ABSTIME.  See man page
+ * of pthread_cond_wait(3p) for more.
  */
 extern struct msgq_packet *msgq_recv(MSGQ *msgq);
 
-
-/*
- * Get a packet from the message queue or wait for one.
- *
- * This is the same as msgq_recv() except this function will wait
- * until ABSTIME if there is no packet received.   If ABSTIME is NULL,
- * this function behaves exactly the same as msgq_recv_wait().
- *
- * Returns a pointer to the packet if found.
- * Retruns NULL on timeout (i.e. ABSTIME is not NULL and ABSTIME is passed.)
- *
- * Returns NULL on any internal error.  (Sets errno)
- *
- * If a UNIX signal is delivered to the caller thread, upon return
- * from the signal handler this function keeps waiting for the message
- * until ABSTIME.  If ABSTIME is NULL, the behavior is the same as
- * msgq_recv_wait().
- *
- * When a caller thread is blocked via this function, if another
- * thread calls msgq_close(), this function stop waiting and returns
- * NULL immediately.
- */
 extern struct msgq_packet *msgq_recv_timedwait(MSGQ *msgq,
                                                struct timespec *abstime);
 
-/*
- * Get a packet from the message queue or wait for one.
- *
- * This is the same as msgq_recv() except this function will wait
- * permanently if there is no packet received.
- *
- * Note that this function may return NULL on any internal error with
- * appropriate errno.  Users of this function should check
- * the return value in case of NULL.
- *
- * If a UNIX signal is delivered to the caller thread, upon return
- * from the signal handler this function resumes waiting for a message
- * or, it shall return NULL due to spurious wakeup.
- */
 extern struct msgq_packet *msgq_recv_wait(MSGQ *msgq);
-
 
 
 /*
  * Returns the number of received packets which is not processed.
  *
  * Note that in a multi-threaded environments, if you have several
- * threads that call msgq_recv() or msgq_recv_wait(), the return value
- * from this function is not quite precise.  For example, even if this
- * function tells that there is one packet, before you call any other
- * function, another thread may interfere by calling msgq_recv().
+ * threads that call msgq_recv(), msgq_recv_wait(), or
+ * msgq_recv_timedwait(), the return value from this function is not
+ * quite precise.  For example, even if this function tells that there
+ * is one packet, before you call any other function, another thread
+ * may interfere by calling msgq_recv().
  */
 extern int msgq_message_count(MSGQ *msgq);
 
+
 /*
  * Returns a sender address of given PACKET.
+ *
+ * The address value will be accessible until msgq_pkt_delete() is
+ * called.
  */
 extern const char *msgq_pkt_sender(struct msgq_packet *packet);
 
 /*
  * Delete the PACKET.
  *
- * Note that this function should be called for packets that is acquired
- * via msgq_recv() or msgq_recv_wait().
+ * You MUST call this function for a packet that is acquired
+ * via msgq_recv(), msgq_recv_wait(), or msgq_recv_timedwait()
+ * when the packet is no longer needed.
  *
  * If you construct struct msgq_packet instance by yourself, DO NOT
  * call this function.

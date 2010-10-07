@@ -29,8 +29,61 @@
 #include <iostream>
 #include <locale>
 #include <limits>
+#include <sstream>
 
 #include "inifile.hpp"
+
+class inierror_voidify {
+public:
+  inierror_voidify() {}
+  void operator&(std::ostream &) {}
+};
+
+#define ERR(inifile, type)                                      \
+  false ? (void) 0 :                                            \
+  inierror_voidify() & inierror(type, (inifile)->estream(),     \
+                                (inifile)->filename(),          \
+                                (inifile)->lineno()).stream()
+
+enum inierror_type {
+  ie_none,
+  ie_warning,
+  ie_error,
+};
+
+class inierror {
+public:
+  inierror(inierror_type type, std::ostream *os,
+           const std::string &filename, long lineno = 0)
+    : type_(type), filename_(filename), lineno_(lineno), os_(os), ss_() {};
+  ~inierror() {
+    if (os_) {
+      if (!filename_.empty())
+        (*os_) << filename_ << ":";
+      if (lineno_ > 0)
+        (*os_) << lineno_ << ": ";
+      switch (type_) {
+      case ie_none:
+        break;
+      case ie_warning:
+        (*os_) << "warning: ";
+      case ie_error:
+        (*os_) << "error: ";
+      }
+      (*os_) << ss_.str() << std::endl;
+    }
+  }
+
+  std::ostream &stream() { return ss_; }
+
+private:
+  inierror_type type_;
+  std::string filename_;
+  long lineno_;
+
+  std::ostream *os_;
+  std::ostringstream ss_;
+};
 
 
 static void
@@ -67,9 +120,14 @@ strip(std::string &s, const std::locale &loc = std::locale())
   lstrip(s, loc);
 }
 
-
-inifile::inifile()
-  : lineno_(0)
+// If I made the constructor in following way:
+//
+// inifile::inifile() : locale_(std::locale) ... { }
+//
+// it would cause std::bad_cast exception.  Don't know why...
+//
+inifile::inifile(const std::locale &loc)
+  : locale_(loc), lineno_(0), es_(&std::cerr)
 {
 }
 
@@ -121,9 +179,29 @@ inifile::incr_lineno(std::istream &is, const std::string &s)
 
 
 void
+inifile::eat_spaces(std::istream &is, char_type lookahead)
+{
+  char_type ch;
+
+  if (lookahead)
+    is.unget();
+
+  while ((is >> ch)) {
+    if (ch == is.widen('\n'))
+      incr_lineno();
+    else if (!std::isspace(ch, locale_)) {
+      is.unget();
+      break;
+    }
+  }
+}
+
+
+void
 inifile::eat_comment(std::istream &is, char_type lookahead)
 {
   is.ignore(std::numeric_limits<std::streamsize>::max(), is.widen('\n'));
+  incr_lineno();
 }
 
 
@@ -131,15 +209,15 @@ bool
 inifile::get_section_name(std::string &name,
                                 std::istream &is, char_type lookahead)
 {
-  is >> std::ws;
+  eat_spaces(is, lookahead);
   getline(is, name);
 
   incr_lineno(is, name);
 
   std::string::size_type i = name.find_first_of(is.widen(']'));
   if (i == std::string::npos) {
-    std::cerr << "error: missing ']' in the section declaration"
-              << std::endl;
+    ERR(this, ie_error) << "missing ']' in the section declaration";
+
     return false;
   }
   else
@@ -158,7 +236,7 @@ inifile::get_esc_hex(int_type &value, std::istream &is)
 
   for (unsigned i = 0; i < sizeof(hex) / sizeof(int_type); ++i) {
     if ((hex[i] = is.get()) == traits_type::eof()) {
-      std::cerr << "error: prematured escape sequence" << std::endl;
+      ERR(this, ie_error) << "prematured escape sequence";
       return false;
     }
     else {
@@ -169,8 +247,7 @@ inifile::get_esc_hex(int_type &value, std::istream &is)
       else if (hex[i] >= is.widen('A') && hex[i] <= is.widen('F'))
         hex[i] -= is.widen('A');
       else {
-        std::cerr << "error: invalid hexadecimal escape sequence"
-                  << std::endl;
+        ERR(this, ie_error) << "invalid hexadecimal escape sequence";
         return false;
       }
     }
@@ -191,15 +268,14 @@ inifile::get_esc_oct(int_type &value, std::istream &is)
 
   for (unsigned i = 0; i < sizeof(oct) / sizeof(int_type); ++i)
     if ((oct[i] = is.get()) == traits_type::eof()) {
-      std::cerr << "error: prematured escape sequence" << std::endl;
+      ERR(this, ie_error) << "prematured escape sequence";
       return false;
     }
     else {
       if (oct[i] >= is.widen('0') && oct[i] <= is.widen('7'))
         oct[i] -= is.widen('0');
       else {
-        std::cerr << "error: invalid octal escape sequence"
-                  << std::endl;
+        ERR(this, ie_error) << "invalid octal escape sequence";
         return false;
       }
     }
@@ -220,7 +296,7 @@ inifile::get_param_value(std::string &name,
   if (lookahead)
     is.unget();
 
-  is >> std::ws;
+  eat_spaces(is);
 
   name.clear();
 
@@ -237,7 +313,7 @@ inifile::get_param_value(std::string &name,
         // parse an escape sequence
         nextch = is.get();
         if (nextch == traits_type::eof()) {
-          std::cerr << "error: prematured escape sequence" << std::endl;
+          ERR(this, ie_error) << "prematured escape sequence";
           return false;
         }
         if (nextch == is.widen('a'))
@@ -287,26 +363,34 @@ inifile::get_param_value(std::string &name,
       else {
         // Even if we found a newline character inside of quoted
         // string, we accept it here.
+        if (ch == is.widen('\n'))
+          incr_lineno();
 
         name.push_back(ch);
       }
-    }
-    // Once we got the quote string value, it is still possible that
-    // there is some characters before the newline character.  If
-    // remaining characters are all whitespaces, that is fine.
-    // However, if any of the remaining characters is non-whitespace,
-    // that is a garbage.
-    {
+    } // end of while
+
+    if (is) {
+      // Once we got the quote string value, it is still possible that
+      // there is some characters before the newline character.  If
+      // remaining characters are all whitespaces, that is fine.
+      // However, if any of the remaining characters is non-whitespace,
+      // that is a garbage.
       std::string garbage;
       getline(is, garbage);
+      incr_lineno();
       strip(garbage);
       // TODO: handle comment
       if (!garbage.empty() &&
           garbage[0] != is.widen(';') && garbage[0] != is.widen('#'))
-        std::cerr << "warning: ignoring remainig characters '"
-                  << garbage << "'" << std::endl;
+        ERR(this, ie_warning) << "ignoring remainig characters '"
+                              << garbage << "'";
+      return true;
     }
-    return true;
+    else {
+      ERR(this, ie_error) << "unexpected EOF encountered";
+      return false;
+    }
   }
   else {
     // We accept empty value.
@@ -343,7 +427,7 @@ inifile::get_param_name(std::string &name,
   incr_lineno(is, name);
 
   if (old_lineno != lineno_) {
-    std::cerr << "error: section name contains invalid character" << std::endl;
+    ERR(this, ie_error) << "section name contains newline character(s)";
     return false;
   }
   rstrip(name);
@@ -396,15 +480,17 @@ inifile::load(const char *pathname)
   std::ifstream is(pathname, std::ios_base::in);
   section_type *current_section = NULL;
 
+  filename_ = pathname;
+
   if (!is.is_open()) {
-    std::cerr << "error: cannot open '" << pathname << "'" << std::endl;
+    ERR(this, ie_error) << "cannot open '" << pathname << "'";
     return false;
   }
+  incr_lineno();
 
   is >> std::noskipws;
   while (is) {
-    if (!(is >> std::ws))
-      break;
+    eat_spaces(is);
 
     std::ifstream::char_type ch;
 

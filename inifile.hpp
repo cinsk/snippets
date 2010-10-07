@@ -87,7 +87,7 @@ public:
   typedef config_type::const_reverse_iterator const_reverse_iterator;
   typedef config_type::const_iterator const_iterator;
 
-  inifile();
+  inifile(const std::locale &loc = std::locale());
   ~inifile();
 
   // Load the INI file.
@@ -128,6 +128,7 @@ private:
   void incr_lineno(int amount = 1) { lineno_ += amount; }
   void incr_lineno(std::istream &is, const std::string &s);
 
+  void eat_spaces(std::istream &is, char_type lookahead = 0);
   void eat_comment(std::istream &is, char_type lookahead = 0);
   bool get_section_name(std::string &name,
                        std::istream &is, char_type lookahead = 0);
@@ -140,8 +141,16 @@ private:
   bool get_esc_hex(int_type &value, std::istream &is);
   bool get_esc_oct(int_type &value, std::istream &is);
 
-  int lineno_;
 
+  const std::string &filename() { return filename_; }
+  long lineno() { return lineno_; }
+  std::ostream *estream() { return es_; }
+
+  const std::locale &locale_;
+
+  std::string filename_;
+  long lineno_;
+  std::ostream *es_;
   config_type config_;
 };
 

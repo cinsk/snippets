@@ -62,6 +62,9 @@ public:
         (*os_) << filename_ << ":";
       if (lineno_ > 0)
         (*os_) << lineno_ << ": ";
+      else
+        (*os_) << " ";
+
       switch (type_) {
       case ie_none:
         break;
@@ -126,8 +129,8 @@ strip(std::string &s, const std::locale &loc = std::locale())
 //
 // it would cause std::bad_cast exception.  Don't know why...
 //
-inifile::inifile(const std::locale &loc)
-  : locale_(loc), lineno_(0), es_(&std::cerr)
+inifile::inifile()
+  : locale_(std::locale()), lineno_(0), es_(&std::cerr)
 {
 }
 
@@ -207,7 +210,7 @@ inifile::eat_comment(std::istream &is, char_type lookahead)
 
 bool
 inifile::get_section_name(std::string &name,
-                                std::istream &is, char_type lookahead)
+                          std::istream &is, char_type lookahead)
 {
   eat_spaces(is, lookahead);
   getline(is, name);
@@ -289,7 +292,7 @@ inifile::get_esc_oct(int_type &value, std::istream &is)
 
 bool
 inifile::get_param_value(std::string &name,
-                               std::istream &is, char_type lookahead)
+                         std::istream &is, char_type lookahead)
 {
   char_type ch;
 
@@ -417,7 +420,7 @@ inifile::get_param_value(std::string &name,
 
 bool
 inifile::get_param_name(std::string &name,
-                              std::istream &is, char_type lookahead)
+                        std::istream &is, char_type lookahead)
 {
   if (lookahead)
     is.unget();
@@ -427,7 +430,7 @@ inifile::get_param_name(std::string &name,
   incr_lineno(is, name);
 
   if (old_lineno != lineno_) {
-    ERR(this, ie_error) << "section name contains newline character(s)";
+    ERR(this, ie_error) << "parameter name contains newline character(s)";
     return false;
   }
   rstrip(name);
@@ -454,8 +457,8 @@ inifile::create_section(const std::string &name)
 
 bool
 inifile::register_parameter(section_type *sect,
-                                  const std::string &name,
-                                  const std::string &value)
+                            const std::string &name,
+                            const std::string &value)
 {
   if (!sect)
     sect = create_section();
@@ -481,6 +484,7 @@ inifile::load(const char *pathname)
   section_type *current_section = NULL;
 
   filename_ = pathname;
+  lineno_ = 0;
 
   if (!is.is_open()) {
     ERR(this, ie_error) << "cannot open '" << pathname << "'";
@@ -535,15 +539,18 @@ main(int argc, char *argv[])
 {
   inifile conf;
 
-  conf.load(argv[1]);
+  for (int i = 1; i < argc; ++i) {
+    if (!conf.load(argv[i]))
+      continue;
 
-  for (inifile::iterator i = conf.begin(); i != conf.end(); ++i) {
-    std::cout << "[" << i->first << "]" << std::endl;
+    for (inifile::iterator i = conf.begin(); i != conf.end(); ++i) {
+      std::cout << "[" << i->first << "]" << std::endl;
 
-    for (inifile::section_type::iterator j = i->second->begin();
-         j != i->second->end(); ++j) {
-      std::cout << "     [" << j->first << "] = ["
-                << j->second << "]" << std::endl;
+      for (inifile::section_type::iterator j = i->second->begin();
+           j != i->second->end(); ++j) {
+        std::cout << "     [" << j->first << "] = ["
+                  << j->second << "]" << std::endl;
+      }
     }
   }
 

@@ -26,6 +26,7 @@
 #error This is a C++ header file
 #endif
 
+#include <locale>
 #include <string>
 #include <iosfwd>
 #include <fstream>
@@ -77,7 +78,8 @@
 
 class inifile {
 public:
-  typedef std::multimap<std::string, std::string> section_type;
+  //typedef std::multimap<std::string, std::string> section_type;
+  typedef std::map<std::string, std::string> section_type;
   typedef std::map<std::string, section_type *> config_type;
   typedef config_type::value_type value_type;
   typedef config_type::size_type size_type;
@@ -87,7 +89,7 @@ public:
   typedef config_type::const_reverse_iterator const_reverse_iterator;
   typedef config_type::const_iterator const_iterator;
 
-  inifile(const std::locale &loc = std::locale());
+  inifile();
   ~inifile();
 
   // Load the INI file.
@@ -97,7 +99,7 @@ public:
 
   // Return the SECTION_NAME section if exists.
   const section_type *section(const std::string &section_name = "") const;
-  section_type *section(const std::string &section_name);
+  section_type *section(const std::string &section_name = "");
 
   // TODO: I'm not sure whether it is good idea to mimic a STL container.
   // TODO: Perhaps exposing config_ is better?
@@ -146,7 +148,7 @@ private:
   long lineno() { return lineno_; }
   std::ostream *estream() { return es_; }
 
-  const std::locale &locale_;
+  const std::locale locale_;
 
   std::string filename_;
   long lineno_;

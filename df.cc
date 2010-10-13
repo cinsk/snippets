@@ -38,14 +38,15 @@ DiskFree::push_back(const char *path, const char *fs)
 {
   value_type val;
 
-  assert(path != 0 && fs != 0);
+  assert(path != 0);
 
   if (statvfs(path, &val.vfs) != 0) {
     failbit_ = true;
     return false;
   }
   val.mounted = path;
-  val.device = fs;
+  if (fs)
+    val.device = fs;
   container_.push_back(val);
   return true;
 }
@@ -230,6 +231,8 @@ main(int argc, char *argv[])
 
   if (argc == 1)
     df.update();
+  else
+    df.update(argc - 1, const_cast<const char **>(argv) + 1);
 
   if (df) {
     for (DiskFree::iterator i = df.begin(); i != df.end(); ++i) {

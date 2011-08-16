@@ -19,8 +19,6 @@
 #ifndef POLLXX_H__
 #define POLLXX_H__
 
-/* $Id$ */
-
 #include <iterator>
 #include <cstdlib>
 #include <errno.h>

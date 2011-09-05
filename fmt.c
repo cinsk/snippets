@@ -17,7 +17,6 @@
 /* Originally written by Ross Paterson <rap@doc.ic.ac.uk>.
  * C module by Seong-Kook Shin <cinsky@gmail.com>. */
 
-/* $Id$ */
 
 //#include <config.h>
 #include <assert.h>

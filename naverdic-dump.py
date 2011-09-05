@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# $Id$
 
 #
 # naverdic-dump.py:  Dump naver English dictionary

@@ -1,4 +1,3 @@
-/* $Id$ */
 /* easy interface for GNU iconv module.
  * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>
  *

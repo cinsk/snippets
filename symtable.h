@@ -1,7 +1,6 @@
 #ifndef SYMTABLE_H__
 #define SYMTABLE_H__
 
-/* $Id$ */
 
 /* symtable: simple symbol table implementation
  * Copyright (C) 2008  Seong-Kook Shin <cinsky@gmail.com>

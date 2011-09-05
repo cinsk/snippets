@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * stream/syslog logger module
  * Copyright (C) 2003, 2004  Seong-Kook Shin <cinsky@gmail.com>

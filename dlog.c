@@ -1,4 +1,3 @@
-/* $Id$ */
 /* dlog: message logger for debugging
  * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>
  *

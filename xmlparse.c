@@ -1,4 +1,3 @@
-/* $Id$ */
 /* xmlparse - easy expat wrapper
  * Copyright (C) 2008, 2009  Seong-Kook Shin <cinsky@gmail.com>
  *

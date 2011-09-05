@@ -1,4 +1,3 @@
-/* $Id$ */
 /* GNU obstack wrapper with some utilities
  * Copyright (C) 2003, 2004  Seong-Kook Shin <cinsky@gmail.com>
  *

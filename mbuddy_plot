@@ -1,7 +1,5 @@
 #!/bin/sh
 
-# $Id$ 
-
 # mbuddy-plot: malloc debugging buddy ploting script
 # Copyright (C) 2006  Seong-Kook Shin <cinsky@gmail.com>
 #

@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# $Id$
-
 #
 # hangyou: classic Hangman style game with hints for education.
 # Copyright(c) 2008   Seong-Kook Shin <cinsky@gmail.com>

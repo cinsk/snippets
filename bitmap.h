@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * bitmap manipulation module
  * Copyright (C) 2003  Seong-Kook Shin <cinsky@gmail.com>

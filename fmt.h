@@ -19,7 +19,6 @@
 #ifndef fmt_h__
 #define fmt_h__
 
-/* $Id$ */
 
 /* Flags for fmt_new()
  *

@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * snprintx: snprintf-like functions for easy formatting strings
  * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>

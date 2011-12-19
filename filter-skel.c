@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * Skeleton source for a filter program
  * Copyright (C) 2005  Seong-Kook Shin <cinsky at gmail dot com>

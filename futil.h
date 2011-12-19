@@ -1,4 +1,3 @@
-/* $Id$ */
 /* Filename relative utility
  * Copyright (C) 2003, 2004, 2005  Seong-Kook Shin <cinsky@gmail.com>
  *

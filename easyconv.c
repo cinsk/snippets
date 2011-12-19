@@ -1,4 +1,3 @@
-/* $Id: easyconv.c,v 1.3 2010/06/27 23:45:28 cinsk Exp $ */
 /* easy interface for GNU iconv module.
  * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>
  *

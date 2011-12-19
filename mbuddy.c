@@ -1,4 +1,3 @@
-/* $Id$ */
 
 /* mbuddy: malloc debugging buddy
  * Copyright (C) 2006  Seong-Kook Shin <cinsky@gmail.com>

@@ -1,7 +1,6 @@
 #ifndef GETCH_H__
 #define GETCH_H__
 
-/* $Id$ */
 
 /*
  * If compiled with GETCH_CHECK_TERM, kbhit(), getch() and getch_()

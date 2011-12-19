@@ -7,7 +7,6 @@
 # Copyright (c) 2009  Seong-Kook Shin <cinsky@gmail.com>
 #
 
-# $Id$
 
 import getopt
 import tempfile

@@ -22,7 +22,7 @@ except ImportError:
     
 hangyou_version = "$Revision$"
 
-URL_WORDS_TODAY = "http://eedic.naver.com/"
+URL_WORDS_TODAY = "http://eedic2009.naver.com/"
 
 TRY_COUNT = 20
 HINT_COUNT = 5
@@ -2048,7 +2048,7 @@ def get_word(word_id):
 
     # Normalize WORD_ID
     word_id = (word_id + WORD_ID_MAX + 1) % (WORD_ID_MAX + 1)
-    url = "http://eedic.naver.com/eedic.naver?id=%u" % word_id
+    url = "http://eedic2009.naver.com/eedic.naver?id=%u" % word_id
     
     re_def = re.compile("(^[0-9][0-9]*\..*$|^[ ]*[A-Z-]+[ ]*)")
     re_word = re.compile("""<span class="hwme2">([^<]*)</span>""")
@@ -2409,7 +2409,7 @@ def print_review(columns = 80):
         # i[1] = word
         # i[2] = tried
         print_review_entry(i[1], i[2],
-                           "http://eedic.naver.com/eedic.naver?id=%d" % i[0],
+                           "http://eedic2009.naver.com/eedic.naver?id=%d" % i[0],
                            columns)
     print ""
     

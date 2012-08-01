@@ -1,0 +1,3 @@
+[submodule "xobstack"]
+	path = xobstack
+	url = https://github.com/cinsk/xobstack.git

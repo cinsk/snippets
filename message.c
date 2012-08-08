@@ -1,5 +1,10 @@
 #define _GNU_SOURCE
 
+#ifdef linux
+#include <features.h>
+#define _FILE_OFFSET_BITS
+#endif
+
 #include "message.h"
 
 #include <assert.h>
@@ -26,6 +31,8 @@
 #define HAVE_JSON
 #define HAVE_SYSLOG
 
+#define USE_RWLOCK
+
 #ifdef HAVE_JSON
 #define __STRICT_ANSI__
 #include <json/json.h>
@@ -38,13 +45,66 @@
 
 #define MCF_UTC 0x0001
 
+
+struct msg_category {
+  struct msg_category *next;
+  struct msg_category *prev;
+  char *name;
+
+  int type;
+  int level;
+  unsigned index;               /* index of the msg_cmap::map array */
+  int refcount;
+
+  char *fmt_prologue;
+  char *fmt_time;
+
+  pthread_rwlock_t lock;
+
+  ssize_t (*write)(struct msg_category *self, int level,
+                   const void *data, size_t size);
+  void (*close)(struct msg_category *self);
+  void (*refresh)(struct msg_category *self);
+};
+
 struct msg_cmap {
   size_t size;
   struct msg_category **map;
+#ifdef USE_RWLOCK
+  pthread_rwlock_t *locks;
+#else
+  pthread_mutex_t *locks;
+#endif
+
+  pthread_t sigthread;
+  void (*alt_huphandler)(int, siginfo_t *, void *);
+  int pipefd[2];
 };
 
 #define MSG_CATEGORY_CMAP_SIZE  509
 
+#ifdef USE_RWLOCK
+#define RD_LOCK(x)      pthread_rwlock_rdlock(x)
+#define WR_LOCK(x)      pthread_rwlock_wrlock(x)
+#define UNLOCK(x)       pthread_rwlock_unlock(x)
+#define INIT_LOCK(x)    pthread_rwlock_init(x, NULL)
+#define DEL_LOCK(x)     pthread_rwlock_destroy(x)
+#elif defined(USE_MUTEX)
+#define RD_LOCK(x)      pthread_mutex_lock(x)
+#define WR_LOCK(x)      pthread_mutex_lock(x)
+#define UNLOCK(x)       pthread_mutex_unlock(x)
+#define INIT_LOCK(x)    pthread_mutex_init(x, NULL)
+#define DEL_LOCK(x)     pthread_mutex_destroy(x)
+#else
+#define RD_LOCK(x)      0
+#define WR_LOCK(x)      0
+#define UNLOCK(x)       0
+#define INIT_LOCK(x)    0
+#define DEL_LOCK(x)     0
+#endif  /* USE_RWLOCK */
+
+#define FILE_MODE       (O_CREAT | O_APPEND | O_CLOEXEC | O_WRONLY)
+#define FILE_ACC        (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 struct category_file {
   struct msg_category base;
 
@@ -69,12 +129,17 @@ struct category_multiplex {
   struct msg_category **sink;
 };
 
-static struct msg_category *message_get_category_(const char *name, int index);
+static struct msg_category *message_get_category_(const char *name,
+                                                  int index, int ref,
+                                                  int locked);
 static int message_add_category_(struct msg_category *category);
-static int message_del_category_(struct msg_category *category, int index);
+static struct msg_category *message_del_category_(struct msg_category *category,
+                                                  int index);
+static void message_release_category(struct msg_category *self);
 
-static int init_category_base(struct msg_category *p,
-                              const char *name, int type);
+static int init_category_base(struct msg_category *p, const char *name,
+                              int type);
+
 static void close_multiplex_category(struct msg_category *self);
 static void close_file_category(struct msg_category *self);
 static void message_finalize(void);
@@ -101,6 +166,9 @@ struct msg_category *message_syslog_category(const char *name,
                                              int option, int facility);
 #endif  /* HAVE_SYSLOG */
 
+static int run_signal_handler(void);
+static void *signal_thread(void *arg);
+
 #ifdef HAVE_JSON
 static struct json_object *json_object_object_vget(struct json_object *obj,
                                                    va_list ap);
@@ -111,7 +179,7 @@ static int message_load_json(const char *pathname);
 #endif  /* HAVE_JSON */
 
 
-static pthread_once_t message_init_once = PTHREAD_ONCE_INIT;
+//static pthread_once_t message_init_once = PTHREAD_ONCE_INIT;
 static pthread_key_t threadname_key;
 
 static pthread_mutex_t cfg_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -127,6 +195,22 @@ struct msg_category *MC_DEFAULT = NULL;
 #define TIMEBUF_MAX     256
 #define PROLOGUE_MAX    1024
 
+
+int
+message_set_level(struct msg_category *category, int level)
+{
+  int ret;
+
+  ret = WR_LOCK(&category->lock);
+  if (ret) {
+    errno = ret;
+    return FALSE;
+  }
+  category->level = level;
+  UNLOCK(&category->lock);
+  return TRUE;
+}
+
 /*
  * Note that only producing functions/macros are thread-safe,
  * and category manipulating(add/remove/modify) functions are not.
@@ -135,14 +219,36 @@ struct msg_category *MC_DEFAULT = NULL;
  * If I cannot manipulating categories after initialization, why do I
  * need it?  Isn't it sufficient to provide removing all categories
  * for cleanup?  I guess so.
+ *
+ * For non-multiplexed category, once added into the category_map,
+ * the category's refcount is zero.
+ *
+ * If the user called message_get_category(), the refcount increases
+ * by one.  User need to call message_unget_category() once finished
+ * to use it, which causes the refcount decrease by one.
+ *
+ * If the category is multiplxed by another category, the refcount is
+ * increased by one.
  */
 static __inline__ void
-category_ref(struct msg_category *self)
+category_ref(struct msg_category *self, int locked)
 {
+  int ret;
+
+  if (!locked) {
+    ret = WR_LOCK(&self->lock);
+    if (ret)
+      fprintf(stderr, "error: locking failed: %s\n", strerror(ret));
+    return;
+  }
   self->refcount++;
+  fprintf(stderr, "category %s: refcount = %d\n", self->name, self->refcount);
+  if (!locked)
+    UNLOCK(&self->lock);
 }
 
 
+#if 0
 static __inline__ void
 category_unref(struct msg_category *self)
 {
@@ -153,13 +259,15 @@ category_unref(struct msg_category *self)
     //self->close(self);
   }
 }
+#endif  /* 0 */
 
 
 struct msg_cmap *
 message_cmap_new(size_t size)
 {
   struct msg_cmap *p;
-  unsigned i;
+  unsigned i, j;
+  int ret;
 
   p = malloc(sizeof(*p));
 
@@ -167,33 +275,80 @@ message_cmap_new(size_t size)
     return NULL;
 
   p->map = malloc(sizeof(*p->map) * size);
-  if (!p->map) {
-    free(p);
-    return NULL;
-  }
+  if (!p->map)
+    goto err;
   p->size = size;
 
   for (i = 0; i < size; i++)
     p->map[i] = NULL;
 
+  if (pipe(p->pipefd))
+    goto err_map;
+
+  p->locks = malloc(sizeof(*p->locks) * size);
+  if (!p->locks)
+    goto err_pipe;
+
+  for (i = 0; i < size; i++) {
+    ret = INIT_LOCK(p->locks + i);
+    if (ret) {
+      for (j = 0; j < i; j++)
+        DEL_LOCK(p->locks + j);
+      goto err_locks;
+    }
+  }
+
   return p;
+
+ err_locks:
+  free(p->locks);
+ err_pipe:
+  close(p->pipefd[0]);
+  close(p->pipefd[1]);
+
+ err_map:
+  free(p->map);
+ err:
+  free(p);
+  return NULL;
 }
 
 
+/*
+ * If LOCKED is FALSE, this function will force read-lock on category_map
+ * for processing.
+ *
+ * If LOCKED is TRUE, this function does not force any lock on category_map.
+ * (It's totally up to the caller to handle the lock.)
+ */
 static struct msg_category *
-message_get_category_(const char *name, int index)
+message_get_category_(const char *name, int index, int ref, int locked)
 {
   struct msg_category *p;
+  int ret;
 
   assert(category_map != NULL);
 
   if (index < 0)
     index = category_hash(name) % category_map->size;
 
-  for (p = category_map->map[index]; p != NULL; p = p->next) {
-    if (strcmp(name, p->name) == 0)
-      return p;
+  if (!locked) {
+    ret = RD_LOCK(category_map->locks + index);
+    if (ret)
+      return NULL;
   }
+
+  for (p = category_map->map[index]; p != NULL; p = p->next) {
+    if (strcmp(name, p->name) == 0) {
+      if (ref)
+        category_ref(p, FALSE);
+      if (!locked)
+        UNLOCK(category_map->locks + index);
+      return p;
+    }
+  }
+  if (!locked)
+    UNLOCK(category_map->locks + index);
   return NULL;
 }
 
@@ -201,11 +356,47 @@ message_get_category_(const char *name, int index)
 struct msg_category *
 message_get_category(const char *name)
 {
-  return message_get_category_(name, -1);
+  return message_get_category_(name, -1, TRUE, FALSE);
 }
 
 
-int
+void
+message_unget_category(struct msg_category *category)
+{
+  int index;
+
+  if (!category)
+    return;
+
+  index = category_hash(category->name) % category_map->size;
+
+  WR_LOCK(&category->lock);
+
+  if (category->refcount > 0) {
+    category->refcount--;
+    fprintf(stderr, "category %s: unget, refcount = %d\n",
+            category->name, category->refcount);
+    UNLOCK(&category->lock);
+    return;
+  }
+  category->refcount--;
+  fprintf(stderr, "category %s: unget(REMOVE), refcount = %d\n",
+          category->name, category->refcount);
+
+  message_del_category_(category, index);
+  category->close(category);
+
+  UNLOCK(&category->lock);
+  message_release_category(category);
+}
+
+
+/*
+ * This function extracts the struct CATEGORY from the category_map.
+ * Note that this function does not REMOVE category itself.  Refer to
+ * message_release_category() for this.
+ */
+struct msg_category *
 message_del_category_(struct msg_category *category, int index)
 {
   struct msg_category *p = category;
@@ -218,6 +409,8 @@ message_del_category_(struct msg_category *category, int index)
   if (!p)
     return FALSE;
 
+  WR_LOCK(category_map->locks + index);
+
   if (p->prev)
     p->prev->next = p->next;
   if (p->next)
@@ -226,13 +419,21 @@ message_del_category_(struct msg_category *category, int index)
   if (category_map->map[index] == p)
     category_map->map[index] = p->next;
 
-  category_unref(p);
+  UNLOCK(category_map->locks + index);
+
+  // category_unref(p);
   /* TODO: category->close?? */
 
-  return TRUE;
+  return p;
 }
 
 
+/*
+ * Add category into the category_map.
+ *
+ * Note that if there is msg_category with the same name in the map,
+ * this function fails.
+ */
 static int
 message_add_category_(struct msg_category *category)
 {
@@ -241,10 +442,13 @@ message_add_category_(struct msg_category *category)
 
   index = category_hash(category->name) % category_map->size;
 
-  p = message_get_category_(category->name, index);
+  WR_LOCK(category_map->locks + index);
+  p = message_get_category_(category->name, index, FALSE, TRUE);
 
-  if (p)
-    message_del_category_(p, index);
+  if (p) {
+    UNLOCK(category_map->locks + index);
+    return FALSE;
+  }
 
   category->next = category_map->map[index];
 
@@ -252,7 +456,8 @@ message_add_category_(struct msg_category *category)
     category->next->prev = category;
 
   category_map->map[index] = category;
-  category_ref(category);
+  //category_ref(category);
+  UNLOCK(category_map->locks + index);
 
   return TRUE;
 }
@@ -261,6 +466,8 @@ message_add_category_(struct msg_category *category)
 static int
 init_category_base(struct msg_category *p, const char *name, int type)
 {
+  int ret;
+
   p->next = p->prev = NULL;
   p->name = strdup(name);
   if (!p->name)
@@ -270,7 +477,6 @@ init_category_base(struct msg_category *p, const char *name, int type)
   p->level = MCL_WARN;
   //p->fd = -1;
 
-  p->flags = 0;
   p->refcount = 0;
 
   p->fmt_prologue = NULL;
@@ -278,6 +484,12 @@ init_category_base(struct msg_category *p, const char *name, int type)
 
   p->write = NULL;
   p->close = NULL;
+
+  ret = INIT_LOCK(&p->lock);
+  if (ret) {
+    errno = ret;
+    return FALSE;
+  }
 
   return TRUE;
 }
@@ -310,12 +522,21 @@ message_multiplexer_add(struct msg_category *multiplexer,
                         struct msg_category *target)
 {
   struct category_multiplex *cp = (struct category_multiplex *)multiplexer;
+  int ret;
 
+  fprintf(stderr, "multiplexer add %s into %s\n",
+          target->name, multiplexer->name);
   if (!make_multiplex_room(cp))
     return FALSE;
 
+  ret = WR_LOCK(&target->lock);
+  if (ret) {
+    fprintf(stderr, "warning: lock failed on %s\n", target->name);
+    return FALSE;
+  }
   cp->sink[cp->size++] = target;
-  category_ref(target);
+  category_ref(target, TRUE);
+  UNLOCK(&target->lock);
 
   return TRUE;
 }
@@ -354,8 +575,6 @@ close_multiplex_category(struct msg_category *self)
   free(cp->sink);
   cp->size = cp->capacity = 0;
   cp->sink = NULL;
-
-  message_close_category(self);
 }
 
 
@@ -377,6 +596,7 @@ message_multiplex_category(const char *name, ...)
   //cp->base.fd = -1;
   cp->base.write = multiplex_write;
   cp->base.close = close_multiplex_category;
+  cp->base.refresh = NULL;
 
   cp->size = cp->capacity = 0;
   cp->sink = NULL;
@@ -395,19 +615,54 @@ message_multiplex_category(const char *name, ...)
   }
   va_end(ap);
 
-  message_add_category_((struct msg_category *)cp);
+  if (!message_add_category_((struct msg_category *)cp)) {
+    /* We failed to add the multiplxer category.  Possibly, before
+     * adding, someone added another category with the same name.
+     * Thus, unreference all child categories, then remove self. */
+    unsigned i;
+
+    for (i = 0; i < cp->size; i++) {
+      message_unget_category(cp->sink[i]);
+    }
+    if (cp->base.refresh)
+      cp->base.refresh((struct msg_category *)cp);
+
+    message_release_category((struct msg_category *)cp);
+    return NULL;
+  }
 
   return (struct msg_category *)cp;
 }
 
 
 void
-message_close_category(struct msg_category *self)
+message_release_category(struct msg_category *self)
 {
   free(self->name);
   free(self->fmt_prologue);
   free(self->fmt_time);
+  DEL_LOCK(&self->lock);
   free(self);
+}
+
+
+static void
+refresh_file_category(struct msg_category *self)
+{
+  struct category_file *cp = (struct category_file *)self;
+  int old_fd, new_fd;
+
+  new_fd = open(cp->pathname, FILE_MODE, FILE_ACC);
+
+  fprintf(stderr, "resetting FD for %s\n", cp->pathname);
+
+  //WR_LOCK(&cp->lock);
+  old_fd = cp->fd;
+  cp->fd = new_fd;
+  //UNLOCK(&cp->lock);
+
+  fsync(old_fd);
+  close(old_fd);
 }
 
 
@@ -422,7 +677,6 @@ close_file_category(struct msg_category *self)
     p->fd = -1;
   }
   free(p->pathname);
-  message_close_category(self);
 }
 
 
@@ -434,10 +688,16 @@ file_write(struct msg_category *self, int level, const void *data, size_t size)
   struct category_file *cp = (struct category_file *)self;
   int written = 0;
 
+  (void)size;
+
   prologue(prefix, PROLOGUE_MAX, cp->base.fmt_prologue,
            level, cp->base.fmt_time);
   asprintf(&msg, "%s%s\n", prefix, (char *)data);
+
+  //RD_LOCK(&cp->lock);
   written = write(cp->fd, msg, strlen(msg));
+  //UNLOCK(&cp->lock);
+
   free(msg);
 
   return written;
@@ -449,6 +709,7 @@ message_file_category(const char *name, const char *pathname)
 {
   struct category_file *cp;
   int saved_errno = 0;
+  //int ret;
 
   assert(category_map != NULL);
 
@@ -460,19 +721,29 @@ message_file_category(const char *name, const char *pathname)
     free(cp);
     return NULL;
   }
-
-  if ((cp->pathname = strdup(pathname)) == NULL) {
-    saved_errno = errno;
+#if 0
+  ret = INIT_LOCK(&cp->lock);
+  if (ret) {
+    saved_errno = ret;
     free(cp);
     errno = saved_errno;
     return NULL;
   }
+#endif  /* 0 */
 
-  cp->fd = open(pathname, O_CREAT | O_APPEND | O_CLOEXEC | O_WRONLY,
-                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+  if ((cp->pathname = strdup(pathname)) == NULL) {
+    saved_errno = errno;
+    free(cp);
+    //DEL_LOCK(&cp->lock);
+    errno = saved_errno;
+    return NULL;
+  }
+
+  cp->fd = open(pathname, FILE_MODE, FILE_ACC);
   if (cp->fd == -1) {
     saved_errno = errno;
     free(cp->base.name);
+    //DEL_LOCK(&cp->lock);
     free(cp);
     errno = saved_errno;
     return NULL;
@@ -480,8 +751,13 @@ message_file_category(const char *name, const char *pathname)
 
   cp->base.write = file_write;
   cp->base.close = close_file_category;
+  cp->base.refresh = refresh_file_category;
 
-  message_add_category_((struct msg_category *)cp);
+  if (!message_add_category_((struct msg_category *)cp)) {
+    cp->base.close((struct msg_category *)cp);
+    message_release_category((struct msg_category *)cp);
+    return NULL;
+  }
 
   return (struct msg_category *)cp;
 }
@@ -521,7 +797,7 @@ parse_syslog_facility(const char *facility)
     E_(LOG_UUCP),
 #undef E_
   };
-  int i;
+  unsigned i;
 
   if (!facility)
     return 0;
@@ -558,7 +834,7 @@ parse_syslog_option(const char *option)
 #endif
 #undef E_
   };
-  int i;
+  unsigned i;
 
   if (!option)
     return 0;
@@ -617,9 +893,8 @@ static void
 close_syslog_category(struct msg_category *self)
 {
   //struct category_syslog *p = (struct category_syslog *)self;
-
+  (void)self;
   closelog();
-  message_close_category(self);
 }
 
 
@@ -649,14 +924,39 @@ message_syslog_category(const char *name, int option, int facility)
 
   cp->base.write = syslog_write;
   cp->base.close = close_syslog_category;
+  cp->base.refresh = NULL;
 
-  message_add_category_((struct msg_category *)cp);
+  if (!message_add_category_((struct msg_category *)cp)) {
+    cp->base.close((struct msg_category *)cp);
+    message_release_category((struct msg_category *)cp);
+
+    return NULL;
+  }
 
   return (struct msg_category *)cp;
 }
 #endif  /* HAVE_SYSLOG */
 
 
+#if 0
+static void
+destroy_threadname(void *ptr)
+{
+  fprintf(stderr, "destroying threadname %s\n", (char *)ptr);
+  free(ptr);
+}
+#endif  /* 0 */
+
+
+/*
+ * For the thread names, it is better to destory them in destroy
+ * handler of pthread_key_create() rather than in clean-up handler
+ * (established by pthread_cleanup_push).  If we embed destroying code
+ * in the clean-up handler, because clean-up handlers are executed in
+ * any order, we cannot use any message functions in the clean-up
+ * handlers.  (I need to check if it is really working on the clean-up
+ * handlers.)
+ */
 static void
 message_init_(void)
 {
@@ -664,16 +964,20 @@ message_init_(void)
   const char *pathname = cfg_pathname;
 
   pthread_key_create(&threadname_key, free);
+  //pthread_key_create(&threadname_key, destroy_threadname);
 
   category_map = message_cmap_new(MSG_CATEGORY_CMAP_SIZE);
 
   if (pathname) {
 #ifdef HAVE_JSON
-    message_load_json(pathname);
+    if (!message_load_json(pathname)) {
+      fprintf(stderr, "warning: error on loading configuration, \"%s\".\n",
+              pathname);
+    }
 #endif
   }
 
-  p = message_get_category_("default", -1);
+  p = message_get_category_("default", -1, FALSE, FALSE);
   if (!p) {
     p = message_file_category("default", "/dev/stderr");
     if (!p) {
@@ -687,16 +991,52 @@ message_init_(void)
 }
 
 
+// message_init(pathname, flags, ...);
 void
-message_init(const char *pathname)
+message_init(const char *pathname, ...)
+//             void (*handler)(int, siginfo_t *, void *))
 {
+  va_list ap;
+  int opt;
+  void (*handler)(int, siginfo_t *, void *);
+  struct sigaction act;
+  int cont = TRUE;
   int ret = 0;
 
+  va_start(ap, pathname);
   pthread_mutex_lock(&cfg_mutex);
+
   if (pathname && !cfg_pathname)
     cfg_pathname = strdup(pathname);
   //ret = pthread_once(&message_init_once, message_init_);
   message_init_();
+
+  while (cont) {
+    opt = (int)va_arg(ap, int);
+
+    switch (opt) {
+    case MCO_SIGHUP:
+      handler = (void (*)(int, siginfo_t *, void *)) \
+        va_arg(ap, void (*)(int, siginfo_t *, void *));
+      run_signal_handler();
+      category_map->alt_huphandler = handler;
+
+      memset(&act, 0, sizeof(act));
+
+      act.sa_sigaction = message_signal_handler;
+      sigfillset(&act.sa_mask);
+      act.sa_flags = SA_SIGINFO;
+
+      if (sigaction(SIGHUP, &act, NULL) == -1) {
+        fprintf(stderr, "sigaction(2) failed: %s\n", strerror(errno));
+      }
+      break;
+    case MCO_NONE:
+    default:
+      cont = FALSE;
+      break;
+    }
+  }
   pthread_mutex_unlock(&cfg_mutex);
 
   if (ret) {
@@ -714,6 +1054,9 @@ message_finalize(void)
   struct msg_category *cp;
   category_map = NULL;
 
+  for (i = 0; i < dst->size; i++)
+    WR_LOCK(dst->locks + i);
+
   for (i = 0; i < dst->size; i++) {
     while (dst->map[i]) {
       cp = dst->map[i];
@@ -721,11 +1064,16 @@ message_finalize(void)
 
       if (cp->close)
         cp->close(cp);
-      else
-        message_close_category(cp);
+      message_release_category(cp);
     }
   }
 
+  for (i = 0; i < dst->size; i++) {
+    UNLOCK(dst->locks + i);
+    DEL_LOCK(dst->locks + i);
+  }
+
+  free(dst->locks);
   free(dst->map);
   free(dst);
 
@@ -954,18 +1302,26 @@ message_c(struct msg_category *category, int level, const char *fmt, ...)
   va_list ap;
   char *user = NULL;
   int sz;
+  int ret;
 
   if (category == NULL)
     return;
 
-  if (level > category->level)
+  ret = RD_LOCK(&category->lock);
+  if (ret)
     return;
+
+  if (level > category->level) {
+    UNLOCK(&category->lock);
+    return;
+  }
 
   va_start(ap, fmt);
   sz = vasprintf(&user, fmt, ap);
   va_end(ap);
 
   category->write(category, level, user, sz);
+  UNLOCK(&category->lock);
 
   free(user);
 }
@@ -1076,7 +1432,8 @@ message_load_json(const char *pathname)
   struct msg_category *mc;
   struct json_object *conf;
   struct json_object *root = json_object_from_file((char *)pathname);
-  if (!root)
+
+  if (!root || root == (struct json_object *)-1)
     return FALSE;
 
   conf = json_object_object_xget(root, "message", NULL);
@@ -1174,39 +1531,121 @@ message_load_json(const char *pathname)
           struct json_object *pr = json_object_object_get(val, "prologue");
 
           //struct array_list *ar = json_object_get_array(childs);
-          int size = json_object_array_length(childs);
-          int i;
+          int i, size;
           struct msg_category *mux, *mc;
 
-          mux = message_multiplex_category(key, NULL);
-
-          for (i = 0; i < size; i++) {
-            struct json_object *ch = json_object_array_get_idx(childs, i);
-            //printf("array[%d] = %s\n", i, (char *)json_object_get_string(ch));
-            mc = message_get_category(json_object_get_string(ch));
-            if (!mc) {
-              fprintf(stderr, "warning: category %s is not defined\n",
-                      json_object_get_string(ch));
-              continue;
-            }
-            message_multiplexer_add(mux, mc);
+          if (!json_object_is_type(childs, json_type_array)) {
+            fprintf(stderr, "error: \"children\" should be an array type.\n");
+            goto end;
           }
-          if (level)
-            mux->level = get_level(json_object_get_string(level));
+          else {
+            size = json_object_array_length(childs);
+            mux = message_multiplex_category(key, NULL);
 
-          if (tm)
-            mux->fmt_time = strdup(json_object_get_string(tm));
+            for (i = 0; i < size; i++) {
+              struct json_object *ch = json_object_array_get_idx(childs, i);
 
-          if (pr)
-            mux->fmt_prologue = strdup(json_object_get_string(pr));
+              mc = message_get_category_(json_object_get_string(ch), -1,
+                                         FALSE, FALSE);
+              if (!mc) {
+                fprintf(stderr, "warning: category %s is not defined\n",
+                        json_object_get_string(ch));
+                continue;
+              }
+              message_multiplexer_add(mux, mc);
+            }
+            if (level)
+              mux->level = get_level(json_object_get_string(level));
+
+            if (tm)
+              mux->fmt_time = strdup(json_object_get_string(tm));
+
+            if (pr)
+              mux->fmt_prologue = strdup(json_object_get_string(pr));
+          }
         }
       }
     }
   }
+ end:
   json_object_put(root);
   return TRUE;
 }
 #endif  /* HAVE_JSON */
+
+
+void
+message_signal_handler(int signo, siginfo_t *info, void *uap)
+{
+  static char buf[1] = { '!' };
+
+  if (category_map) {
+    write(category_map->pipefd[1], buf, sizeof(buf));
+
+    if (category_map->alt_huphandler)
+      category_map->alt_huphandler(signo, info, uap);
+  }
+}
+
+
+static int
+run_signal_handler(void)
+{
+  sigset_t set, oset;
+  int ret;
+  pthread_attr_t attr;
+
+  sigfillset(&set);
+  //sigdelset(&set, SIGHUP);
+  sigemptyset(&oset);
+  pthread_attr_init(&attr);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+  pthread_sigmask(SIG_SETMASK, &set, &oset);
+
+  ret = pthread_create(&category_map->sigthread, &attr, signal_thread,
+                       (void *)&category_map->pipefd[0]);
+  if (ret) {
+    fprintf(stderr, "error: pthread_create() failed: %s\n",
+            strerror(errno));
+  }
+  pthread_sigmask(SIG_SETMASK, &oset, NULL);
+
+  pthread_attr_destroy(&attr);
+  return !ret;
+}
+
+
+static void *
+signal_thread(void *arg)
+{
+  char buf[PIPE_BUF];
+  int readch;
+  unsigned i, sz;
+  struct msg_category *mc;
+  int fd = *(int *)arg;
+
+  while (1) {
+    readch = read(fd, buf, PIPE_BUF);
+
+    if (readch == -1) {
+      break;
+    }
+
+    sz = category_map->size;
+
+    for (i = 0; i < sz; i++) {
+      for (mc = category_map->map[i]; mc != NULL; mc = mc->next) {
+        WR_LOCK(&mc->lock);
+        if (mc->refresh)
+          mc->refresh(mc);
+        UNLOCK(&mc->lock);
+      }
+    }
+  }
+
+  return NULL;
+}
 
 
 #ifdef _TEST_JSON

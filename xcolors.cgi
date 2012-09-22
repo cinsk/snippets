@@ -1,8 +1,16 @@
 #!/usr/bin/env ruby
+# coding: utf-8
 # -*-ruby-*-
 
-RGB="/usr/X11R6/share/X11/rgb.txt"
+RGBS=[ "/usr/X11R6/share/X11/rgb.txt",
+       "/usr/share/X11/rgb.txt" ]
 
+RGBS.each { |path|
+  if File.exists? path
+    RGB=path
+    break
+  end
+}
 
 def rgb_each()
   f = File.open(RGB, "r")
@@ -21,12 +29,15 @@ end
 header = <<END
 <html>
 <style>
-body { font-family: "Monaco"; }
-div { padding: 1ex }
+div { padding: 1ex; font-family: "Monaco", monospace; }
+table { margin-left: auto; margin-right: auto; }
 .black { color: black }
 .white { color: white }
 </style>
 <body>
+<h1>X11 color names</h1>
+<p>This is the color names in #{RGB}.</p>
+
 <table>
 END
 
@@ -36,7 +47,9 @@ footer = <<END
 </html>
 END
 
-puts "Content-type: text/html\n"
+if ENV["GATEWAY_INTERFACE"]
+  puts "Content-type: text/html\n\n"
+end
 
 puts header
 rgb_each { |spec, name|

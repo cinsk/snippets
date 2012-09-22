@@ -23,26 +23,9 @@
 
 #include <stddef.h>
 #include <sys/types.h>
+#include <signal.h>
 
-
-struct msg_category {
-  struct msg_category *next;
-  struct msg_category *prev;
-  char *name;
-
-  int type;
-  int level;
-  unsigned flags;
-  int refcount;
-
-  char *fmt_prologue;
-  char *fmt_time;
-
-  ssize_t (*write)(struct msg_category *self, int level,
-                   const void *data, size_t size);
-  void (*close)(struct msg_category *self);
-
-};
+struct msg_category;
 
 #define MCT_NONE        0
 #define MCT_FILE        1
@@ -61,11 +44,18 @@ struct msg_category {
 
 extern struct msg_category *MC_DEFAULT;
 
-extern void message_init(const char *pathname);
+#define MCO_NONE        0x000
+#define MCO_SIGHUP      0x001
+#define MCO_NONBLOCK    0x002
+
+extern void message_init(const char *pathname, ...);
+
 extern void message_thread_init(const char *thread_name);
 
-struct msg_category *message_get_category(const char *name);
-extern void message_close_category(struct msg_category *self);
+extern void message_signal_handler(int signo, siginfo_t *info, void *uap);
+
+extern struct msg_category *message_get_category(const char *name);
+extern void message_unget_category(struct msg_category *category);
 
 extern void message_c(struct msg_category *category,
                       int level, const char *msg, ...)
@@ -92,11 +82,7 @@ extern struct msg_category *message_multiplex_category(const char *name,
 extern int message_multiplexer_add(struct msg_category *multiplexer,
                                    struct msg_category *target);
 
-static __inline__
-void message_set_level(struct msg_category *category, int level)
-{
-  category->level = level;
-}
+extern int message_set_level(struct msg_category *category, int level);
 
 
 #endif  /* MESSAGE_H__ */

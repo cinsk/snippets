@@ -324,7 +324,11 @@ start_server(void)
       break;
     }
 
+#ifndef __APPLE__
     nevents = ppoll(env.fds, env.nfds, NULL, &env.sigmask);
+#else
+	nevents = poll(env.fds, env.nfds, -1);
+#endif
     if (nevents == -1) {
       error(1, errno, "poll(2) failed");
       /* TODO: graceful exit? */

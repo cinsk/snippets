@@ -448,6 +448,8 @@ spawn_children(size_t nproc, int argc, char *argv[])
         close(p_in[0]);
         continue;
       }
+      else
+        message(0, "using \"%s\" for the STDOUT of child#%d", buf, i);
       p[i].fds[STDOUT_FILENO] = outfd;
     }
 
@@ -460,6 +462,8 @@ spawn_children(size_t nproc, int argc, char *argv[])
         close(p[i].fds[STDOUT_FILENO]);
         continue;
       }
+      else
+        message(0, "using \"%s\" for the STDERR of child#%d", buf, i);
       p[i].fds[STDERR_FILENO] = outfd;
     }
 
@@ -768,6 +772,7 @@ usage(void)
     "           --help              show help message and exit",
     "           --version           show version and exit",
     "",
+    "Report bugs to cinsky@gmail.com",
   };
   int i;
 

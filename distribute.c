@@ -39,11 +39,13 @@
 
 #define SIGBUF_MAX      64
 
+#define VERSION_STRING  "0.1"
 
 static struct option longopts[] = {
   { "jobs", required_argument, NULL, 'j' },
   { "verbose", no_argument, NULL, 'v' },
-  { "output", required_argument, NULL, 'o' },
+  { "out-template", required_argument, NULL, 'O' },
+  { "err-template", required_argument, NULL, 'E' },
   { "input", required_argument, NULL, 'i' },
   { "help", no_argument, NULL, 1 },
   { "version", no_argument, NULL, 2 },
@@ -54,12 +56,20 @@ static struct option longopts[] = {
 struct proc {
   pid_t pid;
   int status;
-  int fds[3];
+  int fds[3];                   /* [0] for child STDIN,
+                                 * [1] for child STDOUT if redirected,
+                                 * [2] for child STDERR if redirected.
+                                 */
 };
+
 
 struct {
   FILE *in;
-  int out[2];                   /* 1 for STDOUT, 0 for STDERR */
+
+  char *out_tmpl;               /* e.g. "/tmp/distribute.XXXXXX" */
+  char *err_tmpl;
+
+  //int out[2];                   /* 1 for STDOUT, 0 for STDERR */
 
   int verbose;
   int debug;
@@ -82,6 +92,7 @@ struct {
 } env;
 
 
+int set_closexec(int fd);
 int set_nonblock(int fd);
 int getncores(void);
 
@@ -99,7 +110,7 @@ void error(int status, int ecode, const char *fmt, ...)
 #endif  /* 0 */
 #endif
 
-static const char *program_name = NULL;
+static const char *program_name = "distribute";
 
 static void init_env(void);
 static void set_poll_errmask();
@@ -112,6 +123,7 @@ static struct proc *spawn_children(size_t nproc, int argc, char *argv[]);
 static struct pollfd *prepare_poll(size_t *nfds, int sigfd,
                                    struct proc *procs, size_t njobs);
 static void child_main(int argc, char *argv[]);
+static void version_and_exit();
 static void usage(void);
 
 
@@ -120,15 +132,18 @@ main(int argc, char *argv[])
 {
   int opt;
 
-  program_name = basename(argv[0]);
+  //program_name = basename(argv[0]);
   set_poll_errmask();
 
   init_env();
 
-  while ((opt = getopt_long(argc, argv, "i:o:O:vDj:", longopts, NULL)) != -1) {
+  while ((opt = getopt_long(argc, argv, "j:i:O:E:vD", longopts, NULL)) != -1) {
     switch (opt) {
     case 1:
+      usage();
+      break;
     case 2:
+      version_and_exit();
       break;
     case 'v':
       env.verbose = TRUE;
@@ -143,36 +158,27 @@ main(int argc, char *argv[])
         env.in = fopen(optarg, "r");
         if (!env.in)
           error(1, errno, "cannot open input file, %s", optarg);
-      }
-      break;
-    case 'o':
-      env.redirect_out = TRUE;
-      if (strcmp(optarg, "-") == 0)
-        env.out[1] = STDOUT_FILENO;
-      else {
-        env.out[1] = open(optarg, O_CREAT | O_TRUNC | O_APPEND | O_WRONLY,
-                          0644);
-        if (env.out[1] == -1)
-          error(1, errno, "cannot open output file, %s", optarg);
+        set_closexec(fileno(env.in));
       }
       break;
     case 'O':
+      env.redirect_out = TRUE;
+
+      asprintf(&env.out_tmpl, "%sXXXXXX", optarg);
+      break;
+    case 'E':
       env.redirect_err = TRUE;
-      if (strcmp(optarg, "-") == 0)
-        env.out[0] = STDERR_FILENO;
-      else {
-        env.out[0] = open(optarg, O_CREAT | O_TRUNC | O_APPEND | O_WRONLY,
-                          0644);
-        if (env.out[0] == -1)
-          error(1, errno, "cannot open output file, %s", optarg);
-      }
+
+      asprintf(&env.err_tmpl, "%sXXXXXX", optarg);
       break;
 
     case 'j':
       env.njobs = atoi(optarg);
       break;
+
     default:
-      usage();
+      printf("Try `--help' for more.\n");
+      exit(1);
     }
   }
   argc -= optind;
@@ -180,9 +186,12 @@ main(int argc, char *argv[])
 
   prepare_signals();
 
+  message(0, "using %d job process(s)", env.njobs);
+
   env.procs = spawn_children(env.njobs, argc, argv);
   start_server();
   cleanup_server();
+
   return 0;
 }
 
@@ -191,8 +200,9 @@ static void
 init_env(void)
 {
   env.in = stdin;
-  env.out[0] = STDERR_FILENO;
-  env.out[1] = STDOUT_FILENO;
+
+  env.out_tmpl = NULL;
+  env.err_tmpl = NULL;
 
   env.verbose = FALSE;
   env.debug = FALSE;
@@ -277,8 +287,7 @@ reap_children(int wait)
 static int
 cleanup_server(void)
 {
-  int i, readch;
-  char buf[PIPE_BUF];
+  int i;
 
   for (i = 0; i < env.njobs; i++) {
     if (env.procs[i].fds[STDIN_FILENO] != -1) {
@@ -287,34 +296,7 @@ cleanup_server(void)
     }
   }
 
-  for (i = 0; i < env.njobs; i++) {
-    if (env.procs[i].fds[STDERR_FILENO] == -1)
-      continue;
-
-    do {
-      readch = read(env.procs[i].fds[STDERR_FILENO], buf, PIPE_BUF);
-      if (readch > 0)
-        write(env.out[0], buf, readch);
-    } while (readch > 0);
-  }
-
-  for (i = 0; i < env.njobs; i++) {
-    if (env.procs[i].fds[STDOUT_FILENO] == -1)
-      continue;
-
-    do {
-      readch = read(env.procs[i].fds[STDOUT_FILENO], buf, PIPE_BUF);
-      if (readch > 0)
-        write(env.out[1], buf, readch);
-    } while (readch > 0);
-  }
-
   reap_children(TRUE);
-
-  if (env.out[0] != STDERR_FILENO)
-    close(env.out[0]);
-  if (env.out[1] != STDOUT_FILENO)
-    close(env.out[1]);
 
   return 0;
 }
@@ -332,7 +314,7 @@ start_server(void)
   ssize_t linelen;
 
   int i;
-  int written, readch;
+  int written;
 
   env.fds = prepare_poll(&env.nfds, env.sig_fds[P_READ], env.procs, env.njobs);
 
@@ -380,40 +362,6 @@ start_server(void)
         else
           use_oldline = FALSE;
       }
-      else if (env.fds[i].revents & POLLIN) {
-        /* TODO: read all and output */
-        int outfd;
-
-        nevents--;
-
-        // njobs: 3
-        //
-        // i: 0 1 2 3 4 5 6 7 8 9
-        //      ..... ..... .....
-        //      0 0 0 1 1 1 2 2 2  (i - 1) / njobs
-
-        outfd = (i - 1) / env.njobs - 1;
-        assert(outfd == 0 || outfd == 1);
-        outfd = env.out[outfd];
-
-        do {
-          readch = read(env.fds[i].fd, buf, PIPE_BUF);
-          if (readch > 0)
-            write(outfd, buf, readch);
-          else if (readch == 0) {    /* EOF */
-            message(0, "fd(%d) closed from the child %u",
-                    env.fds[i].fd,
-                    env.procs[(i - 1) % env.njobs].pid);
-            env.fds[i].fd = -1;
-          }
-          else if (errno != EWOULDBLOCK && errno != EAGAIN) { /* error */
-            error(0, errno, "read error from the child %u",
-                  env.procs[(i - 1) % env.njobs].pid);
-            env.fds[i].fd = -1;
-          }
-        } while (readch == PIPE_BUF);
-      }
-
       if (env.fds[i].revents & env.poll_errmask) {
         error(0, errno, "poll error for the child %u",
               env.procs[(i - 1) % env.njobs].pid);
@@ -436,9 +384,9 @@ prepare_poll(size_t *nfds, int sigfd, struct proc *procs, size_t njobs)
   int i;
   struct pollfd *pfd, *p;
 
-  pfd = malloc(sizeof(struct pollfd) * (njobs * 3 + 1));
+  pfd = malloc(sizeof(struct pollfd) * (njobs + 1));
   if (nfds)
-    *nfds = njobs * 3 + 1;
+    *nfds = njobs + 1;
 
   if (!pfd)
     return NULL;
@@ -455,20 +403,8 @@ prepare_poll(size_t *nfds, int sigfd, struct proc *procs, size_t njobs)
     p->revents = 0;
   }
 
-  for (i = 0; i < njobs; i++, p++) {
-    p->fd = procs[i].fds[STDERR_FILENO];
-    p->events = POLLIN;
-    p->revents = 0;
-  }
-
-  for (i = 0; i < njobs; i++, p++) {
-    p->fd = procs[i].fds[STDOUT_FILENO];
-    p->events = POLLIN;
-    p->revents = 0;
-  }
-
 #ifndef NDEBUG
-  for (i = 0; i < njobs * 3 + 1; i++) {
+  for (i = 0; i < njobs + 1; i++) {
     debug(0, "pollfd: fd(%02d) events(%04x)", pfd[i].fd, pfd[i].events);
   }
 #endif  /* NDEBUG */
@@ -482,7 +418,9 @@ spawn_children(size_t nproc, int argc, char *argv[])
 {
   struct proc *p;
   int i;
-  int p_in[2], p_out[2], p_err[2];
+  int p_in[2];
+  int outfd;
+  char buf[PATH_MAX];
 
   p = malloc(sizeof(struct proc) * nproc);
   if (!p)
@@ -494,17 +432,36 @@ spawn_children(size_t nproc, int argc, char *argv[])
   }
 
   for (i = 0; i < nproc; i++) {
-    if (pipe(p_in) == -1 || pipe(p_out) == -1 || pipe(p_err) == -1)
+    if (pipe(p_in) == -1)
       error(1, errno, "cannot create pipe");
 
 #ifndef NDEBUG
     debug(0, " p_in[0] = %d", p_in[0]);
     debug(0, " p_in[1] = %d", p_in[1]);
-    debug(0, "p_out[0] = %d", p_out[0]);
-    debug(0, "p_out[1] = %d", p_out[1]);
-    debug(0, "p_err[0] = %d", p_err[0]);
-    debug(0, "p_err[1] = %d", p_err[1]);
 #endif
+
+    if (env.out_tmpl && strcmp(env.out_tmpl, "-") != 0) {
+      strncpy(buf, env.out_tmpl, PATH_MAX - 1);
+      buf[PATH_MAX - 1] = '\0';
+      if ((outfd = mkstemp(buf)) == -1) {
+        error(0, errno, "can't create a temporary file");
+        close(p_in[0]);
+        continue;
+      }
+      p[i].fds[STDOUT_FILENO] = outfd;
+    }
+
+    if (env.err_tmpl && strcmp(env.err_tmpl, "-") != 0) {
+      strncpy(buf, env.err_tmpl, PATH_MAX - 1);
+      buf[PATH_MAX - 1] = '\0';
+      if ((outfd = mkstemp(buf)) == -1) {
+        error(0, errno, "can't create a temporary file");
+        close(p_in[0]);
+        close(p[i].fds[STDOUT_FILENO]);
+        continue;
+      }
+      p[i].fds[STDERR_FILENO] = outfd;
+    }
 
     p[i].pid = fork();
 
@@ -513,42 +470,43 @@ spawn_children(size_t nproc, int argc, char *argv[])
     }
     else if (p[i].pid == 0) {   /* child */
       close(p_in[P_WRITE]);
-      close(p_out[P_READ]);
-      close(p_err[P_READ]);
 
       dup2(p_in[P_READ], STDIN_FILENO);
-      debug(0, "child redirect fd: %d->STDIN", p_in[P_READ]);
-
-      if (env.redirect_out) {
-        dup2(p_out[P_WRITE], STDOUT_FILENO);
-        debug(0, "child redirect fd: %d->STDOUT", p_out[P_WRITE]);
-      }
-      if (env.redirect_err) {
-        dup2(p_err[P_WRITE], STDERR_FILENO);
-        debug(0, "child redirect fd: %d->STDERR", p_err[P_WRITE]);
-      }
-
       close(p_in[P_READ]);
-      close(p_out[P_WRITE]);
-      close(p_err[P_WRITE]);
+
+      if (p[i].fds[STDOUT_FILENO] != -1) {
+        dup2(p[i].fds[STDOUT_FILENO], STDOUT_FILENO);
+        close(p[i].fds[STDOUT_FILENO]);
+      }
+
+      if (p[i].fds[STDERR_FILENO] != -1) {
+        dup2(p[i].fds[STDERR_FILENO], STDERR_FILENO);
+        close(p[i].fds[STDERR_FILENO]);
+      }
+
+#if 0
+      for (i = 3; i < 100; i++) {
+        if (close(i) != -1) {
+          fprintf(stderr, "child closing fd %d\n", i);
+        }
+      }
+#endif  /* 0 */
 
       child_main(argc, argv);
     }
     else {                      /* parent */
       close(p_in[P_READ]);
-      close(p_out[P_WRITE]);
-      close(p_err[P_WRITE]);
+
+      if (p[i].fds[STDOUT_FILENO] != -1) {
+        /* TODO: I don't know if we need to keep the fd here. */
+        close(p[i].fds[STDOUT_FILENO]);
+      }
+      if (p[i].fds[STDERR_FILENO] != -1) {
+        /* TODO: I don't know if we need to keep the fd here. */
+        close(p[i].fds[STDERR_FILENO]);
+      }
 
       p[i].fds[STDIN_FILENO] = p_in[P_WRITE];
-
-      p[i].fds[STDOUT_FILENO] = env.redirect_out ? p_out[P_READ] : -1;
-      p[i].fds[STDERR_FILENO] = env.redirect_err ? p_err[P_READ] : -1;
-
-      if (env.redirect_out)
-        set_nonblock(p[i].fds[STDOUT_FILENO]);
-
-      if (env.redirect_err)
-        set_nonblock(p[i].fds[STDERR_FILENO]);
     }
   }
   return p;
@@ -558,7 +516,7 @@ spawn_children(size_t nproc, int argc, char *argv[])
 static void
 child_main(int argc, char *argv[])
 {
-#if 0
+#if 1
   int ret;
   ret = execvp(argv[0], argv);
   if (ret == -1)
@@ -568,7 +526,7 @@ child_main(int argc, char *argv[])
   while (fgets(buf, LINE_MAX, stdin)) {
     printf("child(%u): %s", (unsigned)getpid(), buf);
   }
-  _exit(0);
+  exit(0);
 #endif  /* 0 */
 }
 
@@ -597,6 +555,9 @@ prepare_signals(void)
   if (ret == -1)
     error(1, errno, "pipe(2) failed");
 
+  set_closexec(env.sig_fds[P_WRITE]);
+  set_closexec(env.sig_fds[P_READ]);
+
   set_nonblock(env.sig_fds[P_WRITE]);
   set_nonblock(env.sig_fds[P_READ]);
 
@@ -623,6 +584,25 @@ prepare_signals(void)
   }
   /* SIGCHLD is blocked from now on.  To enable it, use env.poll_sigmask
    * temporarily. */
+}
+
+
+int
+set_closexec(int fd)
+{
+  int flags = fcntl(fd, F_GETFD);
+
+  if (flags == -1) {
+    fprintf(stderr, "error: fcntl(fd, F_GETFD) failed: %s",
+            strerror(errno));
+    return -1;
+  }
+  if (fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1) {
+    fprintf(stderr, "error: fcntl(fd, F_SETFD) failed: %s",
+            strerror(errno));
+    return -1;
+  }
+  return 0;
 }
 
 
@@ -763,14 +743,27 @@ error(int status, int ecode, const char *fmt, ...)
 
 
 static void
+version_and_exit(void)
+{
+  printf("distribute version %s\n", VERSION_STRING);
+  exit(0);
+}
+
+
+static void
 usage(void)
 {
   static const char *msgs[] = {
+    "distribute input lines to multiple processes",
     "usage: XXX [OPTION...] COMMAND [ARG...]",
     "",
     "  -j XX,   --jobs=XX           set number of workers to XX (processes)",
-    "  -o FILE, --output=FILE       output will be stored in FILE",
     "  -i FILE, --input=FILE        input is from FILE",
+    "",
+    "  -O OUT, --output=OUT         child STDOUT will be stored in OUTxxxxxx",
+    "  -E ERR, --output=ERR         child STDERR will be stored in ERRxxxxxx",
+    "",
+    "  -v      --verbose            set verbose mode",
     "",
     "           --help              show help message and exit",
     "           --version           show version and exit",

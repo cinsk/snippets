@@ -1,4 +1,3 @@
-/* $Id$ */
 /* easy interface for GNU iconv module.
  * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>
  *
@@ -17,6 +16,11 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+/*
+ * TODO: add Fail-safe converting, such that if some of the bytes in
+ *       the source could not be converted into the destination encoding,
+ *       add some bytes ('.') and ignore them without converting error.
+ */
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -104,20 +108,23 @@ easyconv_str2str(iconv_t CD, char **DST, size_t *DST_SIZE,
      * contents in *DST since it does not end with the EOL. */
   }
 
-  if (dsize < 4) {
-    /* We don't have enough space for the EOL. */
-    int len = *DST_SIZE + 4;
-    int off = dst - *DST;
-    *DST = realloc(*DST, len);
-    if (!*DST)
-      return (size_t)-1;
-    *DST_SIZE = len;
-    dst = *DST + off;
-  }
+  {
+    /* TODO: Need to change to add the nul suffix into DST?? */
+    if (dsize < 4) {
+      /* We don't have enough space for the EOL. */
+      int len = *DST_SIZE + 4;
+      int off = dst - *DST;
+      *DST = realloc(*DST, len);
+      if (!*DST)
+        return (size_t)-1;
+      *DST_SIZE = len;
+      dst = *DST + off;
+    }
 
-  /* Terminate it with the EOL. */
-  for (i = 0; i < 4; i++)
-    *dst++ = '\0';
+    /* Terminate it with the EOL. */
+    for (i = 0; i < 4; i++)
+      *dst++ = '\0';
+  }
 
   errno = olderr;
 
@@ -141,7 +148,8 @@ main(int argc, char *argv[])
     return 1;
   }
 
-  cd = iconv_open(argv[1], "UTF-8");
+  //cd = iconv_open(argv[1], "UTF-8");
+  cd = iconv_open("UTF-32", argv[1]);
   if (cd == (iconv_t)-1) {
     fprintf(stderr, "error: iconv_open() failed: %s", strerror(errno));
     return 1;

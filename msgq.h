@@ -19,7 +19,6 @@
 #ifndef MSGQ_H__
 #define MSGQ_H__
 
-/* $Id$ */
 
 /*
  * 'msgq' module provides a message queue that can be used for the

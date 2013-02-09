@@ -1,0 +1,42 @@
+#!/bin/bash
+
+while getopts "fh" opt; do
+    case "$opt" in
+        'f')
+            force=1
+            ;;
+        'h')
+            cat <<EOF
+Repeat the given command
+Usage: $0 [OPTION...] COUNT COMMAND...
+
+  -f    Force repetition even if COMMAND failed with nonzero exit code
+  -h    Show help messages and exit
+
+EOF
+            exit 0
+            ;;
+        *)
+            echo "$0: invalid argument" 1>&2
+            exit 1
+            ;;
+    esac
+done
+shift `expr $OPTIND - 1`
+
+if [ "$#" -lt 2 ]; then
+    echo "$0: invalid number of argument(s)." 1>&2
+    echo "$0: Try \`$0 -h' for more help"  1>&2
+    exit 1
+fi
+
+count=$1
+shift
+
+while [ "$count" -gt 0 ]; do
+    "$@"
+    if [ -z "$force" -a "$?" -ne 0 ]; then
+        break
+    fi
+    count=`expr "$count" - 1`
+done

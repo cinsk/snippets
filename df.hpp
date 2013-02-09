@@ -18,8 +18,6 @@
 #ifndef DISKFREE_HPP__
 #define DISKFREE_HPP__
 
-// $Id$
-
 #ifndef __cplusplus
 #error This is a C++ header file.
 #endif

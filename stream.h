@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * Light file stream
  * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>

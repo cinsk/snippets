@@ -1,4 +1,3 @@
-/* $Id$ */
 /* conf: configuration file manager
  * Copyright (C) 2006  Seong-Kook Shin <cinsky@gmail.com>
  *

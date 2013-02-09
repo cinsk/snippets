@@ -2,7 +2,6 @@
  * leb128.c: Encode/Decode LEB128 number
  */
 
-/* $Id$ */
 
 #include <stdio.h>
 #include <stdlib.h>

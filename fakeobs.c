@@ -1,4 +1,3 @@
-/* $Id$ */
 /*
  * GNU obstack emulation, useful for debugging.
  * Copyright (C) 2004  Seong-Kook Shin <cinsky@gmail.com>

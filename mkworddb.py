@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# $Id$
-
 #
 # mkworddb.py:  Create English word database from http://eedic.naver.com/
 # Copyright (c) 2008  Seong-Kook Shin <cinsky@gmail.com>

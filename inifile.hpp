@@ -20,8 +20,6 @@
 #ifndef INIFILE_HPP__
 #define INIFILE_HPP__
 
-// $Id$
-
 #ifndef __cplusplus
 #error This is a C++ header file
 #endif

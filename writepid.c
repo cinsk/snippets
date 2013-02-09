@@ -25,9 +25,8 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "fileutil.h"
 #include "writepid.h"
-
-#define DIR_SEPARATOR   '/'
 
 #ifdef O_DIRECT
 # define OPENFLAGS      (O_WRONLY | O_CREAT | O_SYNC | O_TRUNC | O_DIRECT)
@@ -39,114 +38,6 @@
 
 /* PIDBUF_MAX defines the buffer size that stores the stringed PID number. */
 #define PIDBUF_MAX      32
-
-
-static char *
-dirname(char *pathname)
-{
-  size_t len = strlen(pathname);
-  char *p = pathname + len;
-
-  while (p >= pathname) {
-    if (*p == DIR_SEPARATOR) {
-      *p = '\0';
-      break;
-    }
-    p--;
-  }
-
-  if (p < pathname) {           /* e.g. pathname = "asdf" */
-    strcpy(pathname, ".");
-  }
-  else if (p == pathname) {     /* e.g. pathname = "/asdf" */
-    strcpy(pathname, "/");
-  }
-  return pathname;
-}
-
-
-static int
-make_directory(const char *pathname)
-{
-  char *path;
-  size_t len;
-  char *p;
-  mode_t mask;
-  char saved_char;
-  int ret = -1;
-  int saved_errno = errno;
-
-  if (!pathname)
-    return -1;
-
-  len = strlen(pathname);
-  if (len < 1)
-    len = 1;
-  path = malloc(len + 1);
-  if (!path)
-    return -1;
-  strcpy(path, pathname);
-
-  dirname(path);
-
-  if (strcmp(path, ".") == 0 || strcmp(path, "/") == 0)
-    return 0;
-
-  mask = umask(0);
-  umask(mask & ~0300);          /* ensure intermediate dirs are wx */
-
-  p = path;
-  while (1) {
-    /* This loop tokenizing the pathname by replacing the first
-     * non-'/' character into '\0'.  The replaced character is saved
-     * in 'saved_char'. */
-    saved_char = '\0';
-    while (*p) {
-      if (*p == '/') {
-        while (*++p == '/')
-          ;
-        saved_char = *p;
-        *p = '\0';
-        break;
-      }
-      ++p;
-    }
-
-    if (!saved_char)
-      umask(mask);
-
-    if (mkdir(path, 0777) < 0) {
-      if (errno != EEXIST) {
-#ifdef TEST_WRITEPID
-        fprintf(stderr, "mkdir: |%s| failed, errno = %d\n", path, errno);
-#endif
-        saved_errno = errno;
-        goto end;
-      }
-      else {
-#ifdef TEST_WRITEPID
-        fprintf(stderr, "mkdir: |%s| exist\n", path);
-#endif
-      }
-    }
-    else {
-#ifdef TEST_WRITEPID
-      fprintf(stderr, "mkdir: |%s| success\n", path);
-#endif
-    }
-
-    if (!saved_char)
-      break;
-    *p = saved_char;
-  }
-  ret = 0;
-
- end:
-  free(path);
-  umask(mask);
-  errno = saved_errno;
-  return ret;
-}
 
 
 int

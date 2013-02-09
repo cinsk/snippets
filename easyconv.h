@@ -1,4 +1,3 @@
-/* $Id: easyconv.h,v 1.4 2010/06/27 23:45:08 cinsk Exp $ */
 /* easy interface for GNU iconv module.
  * Copyright (C) 2009  Seong-Kook Shin <cinsky@gmail.com>
  *
@@ -22,10 +21,6 @@
 
 #include <stddef.h>
 #include <iconv.h>
-
-/*
- * TODOs -- list of todo items
- */
 
 /* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS

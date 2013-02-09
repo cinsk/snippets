@@ -1,4 +1,3 @@
-/* $Id$ */
 
 /*
  * Enhanced assert(3)

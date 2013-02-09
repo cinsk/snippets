@@ -18,8 +18,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  */
 
-// $Id$
-
 // TODO: saving configuration to the file.
 // TODO: use exception for errors (with better error messages)
 // TODO: variable substitution like bash(1)

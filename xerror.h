@@ -12,6 +12,8 @@
  * Works in Linux and MacOS.
  */
 
+#include <stdarg.h>
+
 /* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
 # ifdef __cplusplus
@@ -31,10 +33,10 @@ BEGIN_C_DECLS
 extern void xerror(int status, int code, const char *format, ...)
   __attribute__((format (printf, 3, 4)));
 
-#define xdebug(code, fmt, ...)  do {                                    \
-    if (debug_mode)                                                     \
-      xdebug_((code), ("%s:%d: " fmt), __FILE__, __LINE__, ##__VA_ARGS__);  \
-  } while (0)
+#define xdebug(code, fmt, ...)                                          \
+    xdebug_((code), ("%s:%d: " fmt), __FILE__, __LINE__, ##__VA_ARGS__)
+
+extern int xifdebug(void);
 
 extern void xdebug_(int code, const char *format, ...)
   __attribute__((format (printf, 2, 3)));

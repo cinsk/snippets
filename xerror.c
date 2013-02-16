@@ -66,6 +66,13 @@ xerror(int status, int code, const char *format, ...)
 }
 
 
+int
+xifdebug()
+{
+  return debug_mode;
+}
+
+
 void
 xdebug_(int code, const char *format, ...)
 {

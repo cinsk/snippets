@@ -11,8 +11,6 @@
 
 #include "kbhit.h"
 
-#include <error.h>
-
 int
 kbhit_init(struct termios *oldstate)
 {
@@ -106,7 +104,7 @@ kbhit(void)
 }
 
 
-#if 0
+#ifdef _TEST_KBHIT
 #include <stdio.h>
 
 int
@@ -116,8 +114,9 @@ main(void)
   int readch;
 
   struct termios term;
-  kbhit_init(&term);
 
+  kbhit_init(&term);
+  fprintf(stderr, "Press any key to continue...\r\n");
   while (!kbhit()) {
   }
   readch = read(STDIN_FILENO, buf, 100);
@@ -125,4 +124,4 @@ main(void)
 
   return 0;
 }
-#endif  /* 0 */
+#endif  /* _TEST_KBHIT */

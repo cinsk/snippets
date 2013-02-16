@@ -35,7 +35,7 @@
 
 BEGIN_C_DECLS
 
-char *dirname(char *pathname);
+char *dirname_inp(char *pathname);
 
 /*
  * Create new directory as "mkdir -p".

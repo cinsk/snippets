@@ -58,13 +58,16 @@ xerror(int status, int code, const char *format, ...)
   va_list ap;
 
   va_start(ap, format);
-  xmessage(status, code, format, ap);
+  xmessage(1, code, format, ap);
   va_end(ap);
+
+  if (status)
+    exit(status);
 }
 
 
 void
-xdebug(int code, const char *format, ...)
+xdebug_(int code, const char *format, ...)
 {
   va_list ap;
 
@@ -78,7 +81,7 @@ xdebug(int code, const char *format, ...)
 
 
 void
-xmessage(int status, int code, const char *format, va_list ap)
+xmessage(int progname, int code, const char *format, va_list ap)
 {
   char errbuf[BUFSIZ];
 
@@ -87,7 +90,7 @@ xmessage(int status, int code, const char *format, va_list ap)
 
   flockfile(stderr);
 
-  if (program_name)
+  if (progname && program_name)
     fprintf(stderr, "%s: ", program_name);
 
   vfprintf(stderr, format, ap);
@@ -99,9 +102,6 @@ xmessage(int status, int code, const char *format, va_list ap)
   fputc('\n', stderr);
 
   funlockfile(stderr);
-
-  if (status)
-    exit(status);
 }
 
 

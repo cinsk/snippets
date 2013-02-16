@@ -31,10 +31,15 @@ BEGIN_C_DECLS
 extern void xerror(int status, int code, const char *format, ...)
   __attribute__((format (printf, 3, 4)));
 
-extern void xdebug(int code, const char *format, ...)
+#define xdebug(code, fmt, ...)  do {                                    \
+    if (debug_mode)                                                     \
+      xdebug_((code), ("%s:%d: " fmt), __FILE__, __LINE__, ##__VA_ARGS__);  \
+  } while (0)
+
+extern void xdebug_(int code, const char *format, ...)
   __attribute__((format (printf, 2, 3)));
 
-extern void xmessage(int status, int code, const char *format, va_list ap);
+extern void xmessage(int progname, int code, const char *format, va_list ap);
 
 END_C_DECLS
 

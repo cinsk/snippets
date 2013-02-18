@@ -1,4 +1,5 @@
 #define _GNU_SOURCE     1
+#include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -24,6 +25,25 @@ const char *program_name __attribute__((weak)) = 0;
 int debug_mode __attribute__((weak));
 
 static void set_program_name(void) __attribute__((constructor));
+
+static FILE *xerror_stream = (FILE *)-1;
+
+
+FILE *
+xerror_redirect(FILE *fp)
+{
+  FILE *old = xerror_stream;
+
+  assert(fp != NULL);
+
+  if (old == (FILE *)-1)
+    old = NULL;
+
+  xerror_stream = fp;
+
+  return old;
+}
+
 
 #ifdef __APPLE__
 static void
@@ -92,23 +112,29 @@ xmessage(int progname, int code, const char *format, va_list ap)
 {
   char errbuf[BUFSIZ];
 
-  fflush(stdout);
-  fflush(stderr);
+  if (xerror_stream == (FILE *)-1)
+    xerror_stream = stderr;
 
-  flockfile(stderr);
+  if (!xerror_stream)
+    return;
+
+  fflush(stdout);
+  fflush(xerror_stream);
+
+  flockfile(xerror_stream);
 
   if (progname && program_name)
-    fprintf(stderr, "%s: ", program_name);
+    fprintf(xerror_stream, "%s: ", program_name);
 
-  vfprintf(stderr, format, ap);
+  vfprintf(xerror_stream, format, ap);
 
   if (code) {
     if (strerror_r(code, errbuf, BUFSIZ) == 0)
-      fprintf(stderr, ": %s", errbuf);
+      fprintf(xerror_stream, ": %s", errbuf);
   }
-  fputc('\n', stderr);
+  fputc('\n', xerror_stream);
 
-  funlockfile(stderr);
+  funlockfile(xerror_stream);
 }
 
 

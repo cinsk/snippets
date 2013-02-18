@@ -30,11 +30,8 @@
 #include "fileutil.h"
 #include "writepid.h"
 
-#ifdef O_DIRECT
-# define OPENFLAGS      (O_WRONLY | O_CREAT | O_SYNC | O_TRUNC | O_DIRECT)
-#else
-# define OPENFLAGS      (O_WRONLY | O_CREAT | O_SYNC | O_TRUNC)
-#endif
+/* To use O_DIRECT, I need to handle EINVAL, etc.  */
+#define OPENFLAGS      (O_WRONLY | O_CREAT | O_SYNC | O_TRUNC)
 
 #define OPENPERMS       (S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)
 
@@ -45,7 +42,7 @@
 int
 writepid(const char *pathname, pid_t pid)
 {
-  int fd, ret;
+  int fd, ret, tmp;
   char buf[PIDBUF_MAX] = { 0, };
   int saved_errno = errno;
 
@@ -68,7 +65,7 @@ writepid(const char *pathname, pid_t pid)
   }
 
  again:
-  if (write(fd, buf, ret) < 0) {
+  if ((tmp = write(fd, buf, ret)) < 0) {
     if (errno == EINTR) {
       /* I'm not sure write(2) again is a good idea, though... */
       goto again;

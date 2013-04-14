@@ -9,7 +9,6 @@
 
 #include <unistd.h>
 #include <getopt.h>
-#include <error.h>
 
 #define DEFAULT_INDENT  2
 #define DEFAULT_NFIELD  4
@@ -30,6 +29,7 @@ char *basename(const char *pathname);
 void indent(FILE *out);
 int fsize_digit_count(FILE *fp);
 char *xstrncpy(char *d, const char *s, size_t size);
+void error(int status, int ecode, const char *format, ...);
 
 const char *format_data(int base);
 const char *format_offset(int base);

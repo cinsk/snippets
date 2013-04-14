@@ -1,9 +1,13 @@
+#define _GNU_SOURCE     1
+
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <dirent.h>
+
+#include <unistd.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -166,7 +170,7 @@ ds_incr(struct dirstack *q)
 static void
 ds_free(struct dirstack *q)
 {
-  int i;
+  size_t i;
   for (i = 0; i < q->current; i++)
     free(q->data[i]);
   free(q->data);
@@ -305,10 +309,86 @@ delete_directory(const char *pathname, int force)
 }
 
 
+#ifdef __APPLE__
+void *
+memrchr(const void *s, int c, size_t n)
+{
+  const unsigned char *cp;
+
+  if (n != 0) {
+    cp = (unsigned char *)s + n;
+    do {
+      if (*(--cp) == (unsigned char)c)
+        return((void *)cp);
+    } while (--n != 0);
+  }
+  return(NULL);
+}
+#endif  /* __APPLE__ */
+
+char *
+dirname_inp (char *path)
+{
+  static const char dot[] = ".";
+  char *last_slash;
+
+  /* Find last '/'.  */
+  last_slash = path != NULL ? strrchr (path, '/') : NULL;
+
+  if (last_slash != NULL && last_slash != path && last_slash[1] == '\0')
+    {
+      /* Determine whether all remaining characters are slashes.  */
+      char *runp;
+
+      for (runp = last_slash; runp != path; --runp)
+        if (runp[-1] != '/')
+          break;
+
+      /* The '/' is the last character, we have to look further.  */
+      if (runp != path)
+        last_slash = memrchr (path, '/', runp - path);
+    }
+
+  if (last_slash != NULL)
+    {
+      /* Determine whether all remaining characters are slashes.  */
+      char *runp;
+
+      for (runp = last_slash; runp != path; --runp)
+        if (runp[-1] != '/')
+          break;
+
+      /* Terminate the path.  */
+      if (runp == path)
+        {
+          /* The last slash is the first character in the string.  We have to
+             return "/".  As a special case we have to return "//" if there
+             are exactly two slashes at the beginning of the string.  See
+             XBD 4.10 Path Name Resolution for more information.  */
+          if (last_slash == path + 1)
+            ++last_slash;
+          else
+            last_slash = path + 1;
+        }
+      else
+        last_slash = runp;
+
+      last_slash[0] = '\0';
+    }
+  else
+    /* This assignment is ill-designed but the XPG specs require to
+       return a string containing "." in any case no directory part is
+       found and so a static and constant string is required.  */
+    path = (char *) dot;
+
+  return path;
+}
+
+
 int
 make_directory(const char *pathname)
 {
-  char *path;
+  char *path, *dir;
   size_t len;
   char *p;
   mode_t mask;
@@ -327,15 +407,15 @@ make_directory(const char *pathname)
     return -1;
   strcpy(path, pathname);
 
-  dirname(path);
+  dir = dirname_inp(path);
 
-  if (strcmp(path, ".") == 0 || strcmp(path, "/") == 0)
+  if (strcmp(dir, ".") == 0 || strcmp(dir, "/") == 0)
     return 0;
 
   mask = umask(0);
   umask(mask & ~0300);          /* ensure intermediate dirs are wx */
 
-  p = path;
+  p = dir;
   while (1) {
     /* This loop tokenizing the pathname by replacing the first
      * non-'/' character into '\0'.  The replaced character is saved
@@ -355,8 +435,9 @@ make_directory(const char *pathname)
     if (!saved_char)
       umask(mask);
 
-    if (mkdir(path, 0777) < 0) {
-      if (errno != EEXIST) {
+    if (mkdir(dir, 0777) < 0) {
+      /* mkdir("/", 0777) returns EISDIR on MacOS -- cinsk */
+      if (errno != EEXIST && errno != EISDIR) {
 #ifdef TEST_WRITEPID
         fprintf(stderr, "mkdir: |%s| failed, errno = %d\n", path, errno);
 #endif
@@ -389,8 +470,6 @@ make_directory(const char *pathname)
 }
 
 
-int
-copy_files(const char *
 
 #ifdef TEST_FILEUTIL
 int

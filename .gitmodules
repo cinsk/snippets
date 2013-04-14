@@ -1,3 +1,9 @@
 [submodule "xobstack"]
 	path = xobstack
 	url = https://github.com/cinsk/xobstack.git
+[submodule "wait4tcp"]
+	path = wait4tcp
+	url = git@gist.github.com:3769111.git
+[submodule "uthash"]
+	path = uthash
+	url = https://github.com/cinsk/uthash.git

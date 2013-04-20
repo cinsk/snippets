@@ -207,7 +207,7 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
     uint64_t pc = uctx->uc_mcontext->__ss.__rip;
     xerror(0, 0, "Got signal (%d) at address %8p, PC=[%08llx]", signo,
            info->si_addr, pc);
-# else  /* linux */
+# elif defined(REG_EIP) /* linux */
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
     xerror(0, 0, "Got signal (%d) at address %8p, PC=[%08x]", signo,
            info->si_addr, pc);

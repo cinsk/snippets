@@ -453,7 +453,7 @@ get_token(struct lexer *lex)
               ifs_ungetc(lex->is, *endptr++);
 
 #ifdef HAVE_UNISTRING
-            len = u8_uctomb(lex->mb, uc, MB_LEN_MAX);
+            len = u8_uctomb((uint8_t *)lex->mb, uc, MB_LEN_MAX);
             if (len >= 0) {
               for (i = 0; i < len; i++)
                 obs_1grow(lex->pool, lex->mb[i]);

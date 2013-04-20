@@ -293,7 +293,7 @@ ismapped(void *ptr)
 {
   unsigned char vec;
 
-  if (mincore(ptr, 1, &vec) == 0)
+  if (mincore(ptr, 1, (char *)&vec) == 0)
     return 1;
   else if (errno == ENOMEM)
     return 0;

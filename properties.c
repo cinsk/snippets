@@ -367,6 +367,9 @@ parse(struct lexer *lex, struct property **props)
 
     printf("[%s] = [%s]\n", key, value);
 
+#if 1
+    /* TODO: It should contains logic to delete the key first, like properties_put() */
+    //properties_put(props, key, value);
     p = obs_alloc(lex->pool, sizeof(*p));
     if (!p)
       return -1;
@@ -374,6 +377,7 @@ parse(struct lexer *lex, struct property **props)
     p->value = value;
 
     HASH_ADD_KEYPTR(hh, *props, p->key, strlen(p->key), p);
+#endif  /* 0 */
   }
   return 0;
 }
@@ -508,6 +512,9 @@ PROPERTIES *
 properties_load(const char *pathname, PROPERTIES *reuse)
 {
   PROPERTIES *p;
+
+  /* REUSE is not fully implemented yet, read the comment in parse(). */
+  assert(reuse == NULL);
 
   if (!reuse) {
     p = malloc(sizeof(*p));

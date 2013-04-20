@@ -46,10 +46,52 @@ BEGIN_C_DECLS
 struct properties;
 typedef struct properties PROPERTIES;
 
+/*
+ * Load properties file from PATHNAME.
+ *
+ * This function will parse the properties file and returns the structure
+ * that containing parsing result.
+ *
+ * Currently non-null REUSE is not permitted.
+ *
+ * if REUSE is non-null, this function will reuse the structure that containing
+ * the result.  In other words, you can have union of properties by calling
+ * this function multiple times.  In this case, except the first call, remaining calls
+ * should use the return value of the first call as REUSE argument.
+ */
 extern PROPERTIES *properties_load(const char *pathname, PROPERTIES *reuse);
+
+/*
+ * Release the structure returned by properties_load().
+ */
 extern void properties_close(PROPERTIES *props);
+
+/*
+ * Put (key, value) pair in PROPS.
+ *
+ * If KEY already exists in PROPS, this function will replace it.
+ */
 extern void properties_put(PROPERTIES *props, const char *key, const char *value);
+
+/*
+ * Get the value of the KEY in PROPS.
+ *
+ * If KEY does not exist, this function will return NULL.
+ */
 extern const char *properties_get(PROPERTIES *props, const char *key);
+
+/*
+ * Enumerate all (key, value) pair in PROPS.
+ *
+ * This function will call ITER on every (key, value) pair.
+ * If ITER returns -1, this function will stop the enumeration.
+ * DATA will be passed to ITER.
+ *
+ * This funtion will return the count of the enumeration.  For
+ * example, if all ITER calls returns 0, this function will returns
+ * the number of (key, value) pairs.   If every ITER calls returns -1,
+ * this function will return zero.
+ */
 extern int properties_enum(PROPERTIES *props,
                            int (*iter)(const char *key, const char *value, void *data),
                            void *data);

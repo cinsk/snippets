@@ -288,7 +288,7 @@ obstack_1grow_fast(struct obstack *stack, char c)
 }
 
 
-static int
+int
 ismapped(void *ptr)
 {
   unsigned char vec;

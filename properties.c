@@ -121,7 +121,8 @@ ssize_t ifs_getline(char **line, size_t *linecap, struct ifs *s);
 
 static __inline__ int ifs_fill(struct ifs *s);
 
-static int init_lexer(struct obstack *pool, struct lexer *lex, const char *filename);
+static int init_lexer(struct obstack *pool, struct lexer *lex,
+                      const char *filename);
 static void free_lexer(struct lexer *lex);
 
 static char *token_string(struct lexer *lex);
@@ -340,11 +341,11 @@ token_string(struct lexer *lex)
 
 
 static int
-parse(struct lexer *lex, struct property **props)
+parse(PROPERTIES *props)
 {
   int token;
   char *key, *value;
-  struct property *p;
+  struct lexer *lex = props->lex;
 
   while (1) {
     key = value = NULL;
@@ -367,17 +368,7 @@ parse(struct lexer *lex, struct property **props)
 
     printf("[%s] = [%s]\n", key, value);
 
-#if 1
-    /* TODO: It should contains logic to delete the key first, like properties_put() */
-    //properties_put(props, key, value);
-    p = obs_alloc(lex->pool, sizeof(*p));
-    if (!p)
-      return -1;
-    p->key = key;
-    p->value = value;
-
-    HASH_ADD_KEYPTR(hh, *props, p->key, strlen(p->key), p);
-#endif  /* 0 */
+    properties_put(props, key, value);
   }
   return 0;
 }
@@ -538,7 +529,7 @@ properties_load(const char *pathname, PROPERTIES *reuse)
     p->lex = obs_alloc(&p->pool_, sizeof(*p->lex));
     init_lexer(&p->pool_, p->lex, pathname);
 
-    parse(p->lex, &p->root);
+    parse(p);
   }
 
   return p;

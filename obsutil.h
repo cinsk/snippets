@@ -30,6 +30,13 @@
 
 #include <unistd.h>
 
+#if 0
+#define HAVE_INTTYPES_H 1
+#define HAVE_STDINT_H   1
+#include <stdlib.h>
+#include <stdint.h>
+#endif  /* __APPLE__ */
+
 #ifdef FAKEOBJS
 #include "fakeobs.h"
 #else
@@ -54,6 +61,7 @@
 #endif /* BEGIN_C_DECLS */
 
 BEGIN_C_DECLS
+
 
 #define ZAP_PARAM_WARN(x)       ((void)x)
 
@@ -91,10 +99,61 @@ BEGIN_C_DECLS
  * different from original obstack_*().  You should read the codes here.
  */
 
-extern int obstack_errno_;
+#ifdef _PTHREAD
+
+extern int *obs_errno_(void);
+extern void obs_thread_init(void);
+
+#define obs_errno   (*(obs_errno_()))
+
+#else
+extern int obs_errno;
+#endif  /* _PTHREAD */
 
 typedef void (*obstack_alloc_failed_handler_t)(void);
 extern void obsutil_alloc_failed_handler(void);
+
+#ifdef LEGACY
+#define obsutil_init    obsutil_init
+#define OBSTACK_ERROR   obs_has_error
+#define OBSTACK_INIT    obs_init
+#define OBSTACK_BEGIN   obs_begin
+#define OBSTACK_ALLOC   obs_alloc
+#define OBSTACK_OBJECT_SIZE(x)  obstack_object_size(x)
+#define OBSTACK_FINISH(x)       obstack_finish(x)
+#define OBSTACK_ROOM(x)         obstack_room(x)
+#define OBSTACK_1GROW_FAST(s,v) obstack_1grow_fast((s), (v))
+#define OBSTACK_INT_GROW(s,v)   obstack_int_grow((s), (v))
+#define OBSTACK_INT_GROW_FAST(s,v) obstack_int_grow_fast((s), (v))
+#define OBSTACK_FREE(s, o)      obstack_free((s), (o))
+#define OBSTACK_COPY(s, a, z)   obs_copy((s), (a), (z))
+#define OBSTACK_COPY0(s, a, z)  obs_copy0((s), (a), (z))
+#define OBSTACK_BLANK(s, z)     obs_blank((s), (z))
+#define OBSTACK_GROW(s, d, z)   obs_grow((s), (d), (z))
+#define OBSTACK_GROW0(s, d, z)  obs_grow0((s), (d), (z))
+#define OBSTACK_1GROW(s, c)     obs_1grow((s), (c))
+#define OBSTACK_PTR_GROW(s, p)  obs_ptr_grow((s), (p))
+#define OBSTACK_BLANK_FAST(s, z) obstack_blank_fast((s), (z))
+#define OBSTACK_BASE(s)         obstack_base(s)
+#define OBSTCK_NEXT_FREE(s)     obstack_next_free(s)
+#define OBSTACK_ALIGNMENT_MASK(s)       obstack_alignment_mask(s)
+#define OBSTACK_CHUNK_SIZE(s)   obstack_chunk_size(s)
+#define OBSTACK_CAPACITY(s)         obstack_capacity(s)
+#else
+#define obs_object_size(x)      obstack_object_size(x)
+#define obs_finish(x)           obstack_finish(x)
+#define obs_room(x)             obstack_room(x)
+#define obs_1grow_fast(s,c)     obstack_1grow_fast((s), (c))
+#define obs_int_grow(s,v)       obstack_int_grow((s), (v))
+#define obs_int_grow_fast(s,v)  obstack_int_grow_fast((s), (v))
+#define obs_free(s, o)          obstack_free((s), (o))
+#define obs_base(s)             obstack_base(s)
+#define obs_blank_fast(s, z)    obstack_blank_fast((s), (z))
+#define obs_next_free(s)        obstack_next_free(s)
+#define obs_alignment_mask(s)   obstack_alignment_mask(s)
+#define obs_chunk_size(s)       obstack_chunk_size(s)
+#define obs_capacity(s)         obstack_capacity(s)
+#endif  /* LEGACY */
 
 /*
  * You should call obsutil_init() before calling any function or using
@@ -108,34 +167,36 @@ extern void obsutil_alloc_failed_handler(void);
  */
 extern obstack_alloc_failed_handler_t obsutil_init(void);
 
-#define OBS_ERROR_CLEAR         do { obstack_errno_ = 0; } while (0)
-#define OBS_ERROR_SET           do { obstack_errno_ = 1; } while (0)
-#define OBS_ERROR               (obstack_errno_ != 0)
+#define OBS_ERROR_CLEAR         do { obs_errno = 0; } while (0)
+#define OBS_ERROR_SET           do { obs_errno = 1; } while (0)
+#define OBS_ERROR               (obs_errno != 0)
 
 
 /*
- * OBSTACK_ERROR() is provided for the backward compatibility.
+ * obs_has_error() is provided for the backward compatibility.
  * Developers must not use this function in new code.
  */
 static __inline__ int
-OBSTACK_ERROR(void)
+obs_has_error(void)
 {
-  return (obstack_errno_ != 0);
+  return (obs_errno != 0);
 }
 
 
 static __inline__ int
-OBSTACK_INIT(struct obstack *stack)
+obs_init(struct obstack *stack)
 {
+  OBS_ERROR_CLEAR;
+
   obstack_init(stack);
-  if (OBS_ERROR)
+  if (obs_has_error())
     return -1;
   return 0;
 }
 
 
 static __inline__ int
-OBSTACK_BEGIN(struct obstack *stack, int size)
+obs_begin(struct obstack *stack, int size)
 {
   OBS_ERROR_CLEAR;
   obstack_begin(stack, size);
@@ -146,7 +207,7 @@ OBSTACK_BEGIN(struct obstack *stack, int size)
 
 
 static __inline__ void *
-OBSTACK_ALLOC(struct obstack *stack, int size)
+obs_alloc(struct obstack *stack, int size)
 {
   void *ptr;
   OBS_ERROR_CLEAR;
@@ -158,174 +219,85 @@ OBSTACK_ALLOC(struct obstack *stack, int size)
 
 
 static __inline__ void *
-OBSTACK_COPY(struct obstack *stack, const void *address, int size)
+obs_copy(struct obstack *stack, const void *address, int size)
 {
   void *ptr;
   OBS_ERROR_CLEAR;
   ptr = obstack_copy(stack, address, size);
-  if (obstack_errno_)
+  if (obs_errno)
     return 0;
   return ptr;
 }
 
 
 static __inline__ void *
-OBSTACK_COPY0(struct obstack *stack, const void *address, int size)
+obs_copy0(struct obstack *stack, const void *address, int size)
 {
   void *ptr;
   OBS_ERROR_CLEAR;
   ptr = obstack_copy0(stack, address, size);
-  if (obstack_errno_)
+  if (obs_errno)
     return 0;
   return ptr;
 }
 
 
-static __inline__ void
-OBSTACK_FREE(struct obstack *stack, void *object)
-{
-  obstack_free(stack, object);
-}
-
-
 static __inline__ int
-OBSTACK_BLANK(struct obstack *stack, int size)
+obs_blank(struct obstack *stack, int size)
 {
   OBS_ERROR_CLEAR;
   obstack_blank(stack, size);
-  if (obstack_errno_)
+  if (obs_errno)
     return -1;
   return 0;
 }
 
 
 static __inline__ int
-OBSTACK_GROW(struct obstack *stack, const void *data, int size)
+obs_grow(struct obstack *stack, const void *data, int size)
 {
   OBS_ERROR_CLEAR;
   obstack_grow(stack, data, size);
-  if (obstack_errno_)
+  if (obs_errno)
     return -1;
   return 0;
 }
 
 
 static __inline__ int
-OBSTACK_GROW0(struct obstack *stack, const void *data, int size)
+obs_grow0(struct obstack *stack, const void *data, int size)
 {
   OBS_ERROR_CLEAR;
   obstack_grow0(stack, data, size);
-  if (obstack_errno_)
+  if (obs_errno)
     return -1;
   return 0;
 }
 
 
 static __inline__ int
-OBSTACK_1GROW(struct obstack *stack, char c)
+obs_1grow(struct obstack *stack, char c)
 {
   OBS_ERROR_CLEAR;
   obstack_1grow(stack, c);
-  if (obstack_errno_)
+  if (obs_errno)
     return -1;
   return 0;
 }
 
 
 static __inline__ int
-OBSTACK_PTR_GROW(struct obstack *stack, const void *data)
+obs_ptr_grow(struct obstack *stack, const void *data)
 {
   OBS_ERROR_CLEAR;
   obstack_ptr_grow(stack, (void *)data);
-  if (obstack_errno_)
+  if (obs_errno)
     return -1;
   return 0;
-}
-
-
-static __inline__ int
-OBSTACK_INT_GROW(struct obstack *stack, int data)
-{
-  OBS_ERROR_CLEAR;
-  obstack_int_grow(stack, data);
-  if (obstack_errno_)
-    return -1;
-  return 0;
-}
-
-
-static __inline__ void *
-OBSTACK_FINISH(struct obstack *stack)
-{
-  return obstack_finish(stack);
-}
-
-
-static __inline__ int
-OBSTACK_OBJECT_SIZE(struct obstack *stack)
-{
-  return obstack_object_size(stack);
-}
-
-
-static __inline__ int
-OBSTACK_ROOM(struct obstack *stack)
-{
-  return obstack_room(stack);
-}
-
-
-static __inline__ void
-OBSTACK_1GROW_FAST(struct obstack *stack, char c)
-{
-  obstack_1grow_fast(stack, c);
-}
-
-
-static __inline__ void
-OBSTACK_INT_GROW_FAST(struct obstack *stack, int data)
-{
-  obstack_int_grow_fast(stack, data);
-}
-
-
-static __inline__ void
-OBSTACK_BLANK_FAST(struct obstack *stack, int size)
-{
-  obstack_blank_fast(stack, size);
-}
-
-
-static __inline__ void *
-OBSTACK_BASE(struct obstack *stack)
-{
-  return obstack_base(stack);
-}
-
-
-static __inline__ void *
-OBSTACK_NEXT_FREE(struct obstack *stack)
-{
-  return obstack_next_free(stack);
-}
-
-
-static __inline__ int
-OBSTACK_ALIGNMENT_MASK(struct obstack *stack)
-{
-  return obstack_alignment_mask(stack);
-}
-
-
-static __inline__ int
-OBSTACK_CHUNK_SIZE(struct obstack *stack)
-{
-  return obstack_chunk_size(stack);
 }
 
 
 extern size_t obstack_capacity(struct obstack *stack);
-#define OBSTACK_CAPACITY(stack)         obstack_capacity(stack)
 
 #ifndef NDEBUG
 extern void obstack_dump(struct obstack *stack);
@@ -341,36 +313,36 @@ extern int obstack_belong(struct obstack *stack, void *ptr, size_t size);
  * Note that the growing object is finished with a null character.
  */
 static __inline__ char *
-OBSTACK_GETCWD_GROW(struct obstack *stack)
+obs_getcwd_grow(struct obstack *stack)
 {
   size_t capacity;
   char *cwd;
   int saved_errno = 0;
 
   assert(stack != NULL);
-  assert(OBSTACK_OBJECT_SIZE(stack) == 0);
+  assert(obs_object_size(stack) == 0);
 
   capacity = PATH_MAX;
-  OBSTACK_BLANK(stack, capacity);
+  obs_blank(stack, capacity);
 
   while (1) {
-    cwd = getcwd((char *)OBSTACK_BASE(stack), OBSTACK_OBJECT_SIZE(stack));
+    cwd = getcwd((char *)obs_base(stack), obs_object_size(stack));
     if (!cwd) {
       if (errno != ERANGE) {
         saved_errno = errno;
         break;
       }
       else {
-        OBSTACK_BLANK(stack, PATH_MAX);
+        obs_blank(stack, PATH_MAX);
       }
     }
     else {
-      OBSTACK_BLANK(stack, strlen(cwd) + 1 - OBSTACK_OBJECT_SIZE(stack));
+      obs_blank(stack, strlen(cwd) + 1 - obs_object_size(stack));
       break;
     }
   }
   if (!cwd) {
-    OBSTACK_FREE(stack, OBSTACK_FINISH(stack));
+    obs_free(stack, obs_finish(stack));
     errno = saved_errno;
     return 0;                   /* Unrecoverable error occurred */
   }
@@ -385,10 +357,10 @@ OBSTACK_GETCWD_GROW(struct obstack *stack)
  * Returns a pointer to the current directory name.
  */
 static __inline__ char *
-OBSTACK_GETCWD(struct obstack *stack)
+obstack_getcwd(struct obstack *stack)
 {
-  char *p = OBSTACK_GETCWD_GROW(stack);
-  return (p) ? (char *)OBSTACK_FINISH(stack) : 0;
+  char *p = obs_getcwd_grow(stack);
+  return (p) ? (char *)obs_finish(stack) : 0;
 }
 
 
@@ -399,21 +371,21 @@ OBSTACK_GETCWD(struct obstack *stack)
  * It returns a pointer to the (first) finished object.
  */
 static __inline__ void *
-OBSTACK_DUP_GROW(struct obstack *stack)
+obs_dup_grow(struct obstack *stack)
 {
   void *p;
   size_t size;
 
-  size = OBSTACK_OBJECT_SIZE(stack);
+  size = obs_object_size(stack);
   if (size == 0)
     return 0;
 
-  p = OBSTACK_FINISH(stack);
+  p = obs_finish(stack);
   if (!p)
     return 0;
 
-  OBSTACK_GROW(stack, p, size);
-  return OBSTACK_BASE(stack);
+  obs_grow(stack, p, size);
+  return obs_base(stack);
 }
 
 
@@ -435,22 +407,22 @@ OBSTACK_DUP_GROW(struct obstack *stack)
  * \endcode
  */
 static __inline__ void *
-OBSTACK_DUP_GROW0(struct obstack *stack)
+obs_dup_grow0(struct obstack *stack)
 {
   void *p;
   size_t size;
 
-  size = OBSTACK_OBJECT_SIZE(stack);
+  size = obs_object_size(stack);
   if (size == 0)
     return 0;
 
-  OBSTACK_1GROW(stack, '\0');
-  p = OBSTACK_FINISH(stack);
+  obs_1grow(stack, '\0');
+  p = obs_finish(stack);
   if (!p)
     return 0;
 
-  OBSTACK_GROW(stack, p, size);
-  return OBSTACK_BASE(stack);
+  obs_grow(stack, p, size);
+  return obs_base(stack);
 }
 
 
@@ -459,20 +431,20 @@ OBSTACK_DUP_GROW0(struct obstack *stack)
 
 
 static __inline__ char *
-OBSTACK_STR_COPY(struct obstack *stack, const char *s)
+obs_str_copy(struct obstack *stack, const char *s)
 {
-  return (char *)OBSTACK_COPY0(stack, s, strlen(s));
+  return (char *)obs_copy0(stack, s, strlen(s));
 }
 
 
 static __inline__ char *
-OBSTACK_STR_COPY2(struct obstack *stack, const char *s1, const char *s2)
+obs_str_copy2(struct obstack *stack, const char *s1, const char *s2)
 {
   char *ret;
   int l1 = strlen(s1);
   int l2 = strlen(s2);
 
-  ret = (char *)OBSTACK_ALLOC(stack, l1 + l2 + 1);
+  ret = (char *)obs_alloc(stack, l1 + l2 + 1);
   if (!ret)
     return 0;
 
@@ -484,15 +456,15 @@ OBSTACK_STR_COPY2(struct obstack *stack, const char *s1, const char *s2)
 
 
 static __inline__ char *
-OBSTACK_STR_COPY3(struct obstack *stack,
-                  const char *s1, const char *s2, const char *s3)
+obs_str_copy3(struct obstack *stack,
+              const char *s1, const char *s2, const char *s3)
 {
   char *ret;
   int l1 = strlen(s1);
   int l2 = strlen(s2);
   int l3 = strlen(s3);
 
-  ret = (char *)OBSTACK_ALLOC(stack, l1 + l2 + l3 + 1);
+  ret = (char *)obs_alloc(stack, l1 + l2 + l3 + 1);
   if (!ret)
     return 0;
 
@@ -505,26 +477,26 @@ OBSTACK_STR_COPY3(struct obstack *stack,
 
 
 static __inline__ int
-OBSTACK_STR_GROW(struct obstack *stack, const char *s)
+obs_str_grow(struct obstack *stack, const char *s)
 {
-  return OBSTACK_GROW0(stack, s, strlen(s));
+  return obs_grow0(stack, s, strlen(s));
 }
 
 
 static __inline__ char *
-OBSTACK_STR_GROW2(struct obstack *stack, const char *s1, const char *s2)
+obs_str_grow2(struct obstack *stack, const char *s1, const char *s2)
 {
   char *base;
   size_t size;
   int l1 = strlen(s1);
   int l2 = strlen(s2);
 
-  size = OBSTACK_OBJECT_SIZE(stack);
-  OBSTACK_BLANK(stack, l1 + l2 + 1);
-  if (OBSTACK_ERROR())
+  size = obs_object_size(stack);
+  obs_blank(stack, l1 + l2 + 1);
+  if (obs_has_error())
     return 0;
 
-  base = (char *)OBSTACK_BASE(stack) + size;
+  base = (char *)obs_base(stack) + size;
   strcpy(base, s1);
   strcpy(base + l1, s2);
 
@@ -533,8 +505,8 @@ OBSTACK_STR_GROW2(struct obstack *stack, const char *s1, const char *s2)
 
 
 static __inline__ char *
-OBSTACK_STR_GROW3(struct obstack *stack,
-                  const char *s1, const char *s2, const char *s3)
+obs_str_grow3(struct obstack *stack,
+              const char *s1, const char *s2, const char *s3)
 {
   char *base;
   size_t size;
@@ -542,11 +514,11 @@ OBSTACK_STR_GROW3(struct obstack *stack,
   int l2 = strlen(s2);
   int l3 = strlen(s3);
 
-  size = OBSTACK_OBJECT_SIZE(stack);
-  OBSTACK_BLANK(stack, l1 + l2 + l3 + 1);
-  if (OBSTACK_ERROR())
+  size = obs_object_size(stack);
+  obs_blank(stack, l1 + l2 + l3 + 1);
+  if (obs_has_error())
     return 0;
-  base = (char *)OBSTACK_BASE(stack) + size;
+  base = (char *)obs_base(stack) + size;
   strcpy(base, s1);
   strcpy(base + l1, s2);
   strcpy(base + l1 + l2, s3);
@@ -560,18 +532,18 @@ OBSTACK_STR_GROW3(struct obstack *stack,
 #include <wchar.h>
 
 static __inline__ int
-OBSTACK_WGROW0(struct obstack *stack, const void *data, int size)
+obs_wgrow0(struct obstack *stack, const void *data, int size)
 {
   int s;
 
   assert(size % sizeof(wchar_t) == 0);
 
-  s = OBSTACK_OBJECT_SIZE(stack);
-  if (OBSTACK_GROW(stack, data, size) < 0)
+  s = obs_object_size(stack);
+  if (obs_grow(stack, data, size) < 0)
     return -1;
 
-  if (OBSTACK_GROW(stack, L"", sizeof(wchar_t)) < 0) {
-    OBSTACK_BLANK(stack, -s);
+  if (obs_grow(stack, L"", sizeof(wchar_t)) < 0) {
+    obs_blank(stack, -s);
     return -1;
   }
   return 0;
@@ -579,38 +551,38 @@ OBSTACK_WGROW0(struct obstack *stack, const void *data, int size)
 
 
 static __inline__ void *
-OBSTACK_WCOPY0(struct obstack *stack, const void *address, int size)
+obs_wcopy0(struct obstack *stack, const void *address, int size)
 {
   assert(size % sizeof(wchar_t) == 0); /* check the alignment */
 
-  if (OBSTACK_WGROW0(stack, address, size) < 0)
+  if (obs_wgrow0(stack, address, size) < 0)
     return 0;
 
-  return OBSTACK_FINISH(stack);
+  return obs_finish(stack);
 }
 
 
 static __inline__ int
-OBSTACK_1WGROW(struct obstack *stack, wchar_t c)
+obs_1wgrow(struct obstack *stack, wchar_t c)
 {
-  return OBSTACK_GROW(stack, &c, sizeof(c));
+  return obs_grow(stack, &c, sizeof(c));
 }
 
 
 static __inline__ wchar_t *
-OBSTACK_WSTR_COPY(struct obstack *stack, const wchar_t *s)
+obs_wstr_copy(struct obstack *stack, const wchar_t *s)
 {
-  return (wchar_t *)OBSTACK_WCOPY0(stack, s, wcslen(s) * sizeof(wchar_t));
+  return (wchar_t *)obs_wcopy0(stack, s, wcslen(s) * sizeof(wchar_t));
 }
 
 static __inline__ wchar_t *
-OBSTACK_WSTR_COPY2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
+obs_wstr_copy2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
 {
   wchar_t *p;
   size_t l1 = wcslen(s1);
   size_t l2 = wcslen(s2);
 
-  p = (wchar_t *)OBSTACK_ALLOC(stack, (l1 + l2 + 1) * sizeof(wchar_t));
+  p = (wchar_t *)obs_alloc(stack, (l1 + l2 + 1) * sizeof(wchar_t));
   if (!p)
     return 0;
 
@@ -622,15 +594,15 @@ OBSTACK_WSTR_COPY2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
 
 
 static __inline__ wchar_t *
-OBSTACK_WSTR_COPY3(struct obstack *stack,
-                   const wchar_t *s1, const wchar_t *s2, const wchar_t *s3)
+obs_wstr_copy3(struct obstack *stack,
+               const wchar_t *s1, const wchar_t *s2, const wchar_t *s3)
 {
   wchar_t *ret;
   int l1 = wcslen(s1);
   int l2 = wcslen(s2);
   int l3 = wcslen(s3);
 
-  ret = (wchar_t *)OBSTACK_ALLOC(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
+  ret = (wchar_t *)obs_alloc(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
   if (!ret)
     return 0;
 
@@ -643,26 +615,26 @@ OBSTACK_WSTR_COPY3(struct obstack *stack,
 
 
 static __inline__ int
-OBSTACK_WSTR_GROW(struct obstack *stack, const wchar_t *s)
+obs_wstr_grow(struct obstack *stack, const wchar_t *s)
 {
-  return OBSTACK_WGROW0(stack, s, wcslen(s) * sizeof(wchar_t));
+  return obs_wgrow0(stack, s, wcslen(s) * sizeof(wchar_t));
 }
 
 
 static __inline__ int
-OBSTACK_WSTR_GROW2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
+obs_wstr_grow2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
 {
   wchar_t *base;
   size_t size;
   int l1 = wcslen(s1);
   int l2 = wcslen(s2);
 
-  size = OBSTACK_OBJECT_SIZE(stack);
-  OBSTACK_BLANK(stack, (l1 + l2 + 1) * sizeof(wchar_t));
-  if (OBSTACK_ERROR())
+  size = obs_object_size(stack);
+  obs_blank(stack, (l1 + l2 + 1) * sizeof(wchar_t));
+  if (obs_has_error())
     return -1;
 
-  base = (wchar_t *)((char *)OBSTACK_BASE(stack) + size);
+  base = (wchar_t *)((char *)obs_base(stack) + size);
   wcscpy(base, s1);
   wcscpy(base + l1, s2);
 
@@ -671,8 +643,8 @@ OBSTACK_WSTR_GROW2(struct obstack *stack, const wchar_t *s1, const wchar_t *s2)
 
 
 static __inline__ int
-OBSTACK_WSTR_GROW3(struct obstack *stack,
-                   const wchar_t *s1, const wchar_t *s2, const wchar_t *s3)
+obs_wstr_grow3(struct obstack *stack,
+               const wchar_t *s1, const wchar_t *s2, const wchar_t *s3)
 {
   wchar_t *base;
   size_t size;
@@ -680,11 +652,11 @@ OBSTACK_WSTR_GROW3(struct obstack *stack,
   int l2 = wcslen(s2);
   int l3 = wcslen(s3);
 
-  size = OBSTACK_OBJECT_SIZE(stack);
-  OBSTACK_BLANK(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
-  if (OBSTACK_ERROR())
+  size = obs_object_size(stack);
+  obs_blank(stack, (l1 + l2 + l3 + 1) * sizeof(wchar_t));
+  if (obs_has_error())
     return -1;
-  base = (wchar_t *)((char *)OBSTACK_BASE(stack) + size);
+  base = (wchar_t *)((char *)obs_base(stack) + size);
   wcscpy(base, s1);
   wcscpy(base + l1, s2);
   wcscpy(base + l1 + l2, s3);
@@ -693,8 +665,13 @@ OBSTACK_WSTR_GROW3(struct obstack *stack,
 }
 #endif  /* NO_WCHAR_SUPPORT */
 
+extern char *obs_format(struct obstack *stack, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
+
+extern char *obs_grow_format(struct obstack *stack, const char *format, ...)
+  __attribute__ ((format (printf, 2, 3)));
+
 
 END_C_DECLS
 
 #endif  /* OBSUTIL_H_ */
-

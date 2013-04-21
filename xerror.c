@@ -196,7 +196,6 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 {
   void *trace[BACKTRACE_MAX];
   int ret;
-  ucontext_t *uctx = (ucontext_t *)uctx_void;
 
   if (!backtrace_mode)
     return;
@@ -204,10 +203,12 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
   {
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
+    ucontext_t *uctx = (ucontext_t *)uctx_void;
     uint64_t pc = uctx->uc_mcontext->__ss.__rip;
     xerror(0, 0, "Got signal (%d) at address %8p, PC=[%08llx]", signo,
            info->si_addr, pc);
-# else  /* linux */
+# elif defined(REG_EIP) /* linux */
+    ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
     xerror(0, 0, "Got signal (%d) at address %8p, PC=[%08x]", signo,
            info->si_addr, pc);

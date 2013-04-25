@@ -2,6 +2,35 @@
 #ifndef DIFFTIME_H__
 #define DIFFTIME_H__
 
+/*
+ * Measuring Time Difference
+ * Copyright (C) 2013  Seong-Kook Shin <cinsky@gmail.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject to
+ * the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+ * OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+ * WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * Except as contained in this notice, the name(s) of the above copyright
+ * holders shall not be used in advertising or otherwise to promote the
+ * sale, use or other dealings in this Software without prior written
+ * authorization.
+ */
+
 #include <sys/time.h>
 
 /* This indirect using of extern "C" { ... } makes Emacs happy */
@@ -16,6 +45,28 @@
 #endif /* BEGIN_C_DECLS */
 
 
+/*
+ * Usage:
+ *
+ * In ANSI C code (upto C90):
+ *
+ *   long elapsed;
+ *   DIFFTIME_BEGIN {
+ *     your_code;
+ *     ...;
+ *   } END_DIFFTIME(elapsed);
+ *   printf("elapsed: %ld\n", elapsed);
+ *
+ * In ISO C code (C99) and C++:
+ *
+ *   long elapsed;
+ *   DIFFTIME(elasped) {
+ *     your_code;
+ *     ...;
+ *   }
+ *   printf("elapsed: %ld\n", elapsed);
+ *
+ */
 #define DIFFTIME_BEGIN  do { struct timeval b_egin____;             \
   gettimeofday(&b_egin____, 0);                                     \
   do {
@@ -53,9 +104,10 @@ df__gettime__(void)
   return tv;
 }
 #define DIFFTIME(store) for (struct df__ t_v__ = df__gettime__(), e_nd__; \
+                             t_v__.cont--;                              \
                              gettimeofday(&e_nd__.tv, 0),               \
-                               (store) = diff_timeval(&e_nd__.tv, &t_v__.tv), \
-                               t_v__.cont--; )
+                             (store) = diff_timeval(&e_nd__.tv, &t_v__.tv) \
+                             )
 #endif
 
 END_C_DECLS

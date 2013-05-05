@@ -44,7 +44,7 @@
 #endif
 
 #include "xerror.h"
-#include "obsutil.h"
+#include "xobstack.h"
 #include "uthash.h"
 
 #include "properties.h"
@@ -93,7 +93,7 @@ struct lexer {
   char escseq[5];
   char mb[MB_LEN_MAX];
 
-  struct obstack *pool;
+  struct xobs *pool;
 };
 
 
@@ -104,7 +104,7 @@ struct properties {
 
   const char *filename;
 
-  struct obstack pool_;
+  struct xobs pool_;
 };
 
 
@@ -121,7 +121,7 @@ ssize_t ifs_getline(char **line, size_t *linecap, struct ifs *s);
 
 static __inline__ int ifs_fill(struct ifs *s);
 
-static int init_lexer(struct obstack *pool, struct lexer *lex, const char *filename);
+static int init_lexer(struct xobs *pool, struct lexer *lex, const char *filename);
 static void free_lexer(struct lexer *lex);
 
 static char *token_string(struct lexer *lex);
@@ -300,12 +300,12 @@ ifs_ungetc(struct ifs *s, char ch)
 
 
 static int
-init_lexer(struct obstack *pool, struct lexer *lex, const char *filename)
+init_lexer(struct xobs *pool, struct lexer *lex, const char *filename)
 {
   lex->is = ifs_open(filename);
   lex->pool = pool;
 
-  lex->filename = obs_copy0(lex->pool, filename, strlen(filename));
+  lex->filename = xobs_copy0(lex->pool, filename, strlen(filename));
   lex->lineno = 1;
 
   return 0;
@@ -316,7 +316,7 @@ static void
 free_lexer(struct lexer *lex)
 {
   ifs_close(lex->is);
-  //obs_free(lex->pool, NULL);
+  //xobs_free(lex->pool, NULL);
 }
 
 
@@ -325,8 +325,8 @@ token_string(struct lexer *lex)
 {
   char *p, *end, *q;
 
-  p = obs_base(lex->pool);
-  end = p + obs_object_size(lex->pool);
+  p = xobs_base(lex->pool);
+  end = p + xobs_object_size(lex->pool);
 
   for (q = end - 1; q >= p; q--) {
     if (isspace(*q))
@@ -335,7 +335,7 @@ token_string(struct lexer *lex)
       break;
   }
 
-  return obs_finish(lex->pool);
+  return xobs_finish(lex->pool);
 }
 
 
@@ -370,7 +370,7 @@ parse(struct lexer *lex, struct property **props)
 #if 1
     /* TODO: It should contains logic to delete the key first, like properties_put() */
     //properties_put(props, key, value);
-    p = obs_alloc(lex->pool, sizeof(*p));
+    p = xobs_alloc(lex->pool, sizeof(*p));
     if (!p)
       return -1;
     p->key = key;
@@ -456,7 +456,7 @@ get_token(struct lexer *lex)
             len = u8_uctomb(lex->mb, uc, MB_LEN_MAX);
             if (len >= 0) {
               for (i = 0; i < len; i++)
-                obs_1grow(lex->pool, lex->mb[i]);
+                xobs_1grow(lex->pool, lex->mb[i]);
             }
             else {
               /* TODO: len == -1 illegal unicode escape sequence */
@@ -464,7 +464,7 @@ get_token(struct lexer *lex)
 #else
             xerror(0, 0, "%s:%d: unicode escape sequence is not supported",
                    lex->filename, lex->lineno);
-            obs_1grow(lex->pool, '?');
+            xobs_1grow(lex->pool, '?');
 #endif  /* HAVE_UNISTRING */
           }
           break;
@@ -474,7 +474,7 @@ get_token(struct lexer *lex)
 
         case ':':
         case '=':
-          obs_1grow(lex->pool, ch);
+          xobs_1grow(lex->pool, ch);
           break;
 
         default:
@@ -487,7 +487,7 @@ get_token(struct lexer *lex)
         case '=':
         case ':':
         case '\n':
-          obs_1grow(lex->pool, '\0');
+          xobs_1grow(lex->pool, '\0');
 
           /* NAME part is ready */
           /* TODO: rtrim NAME part */
@@ -495,11 +495,11 @@ get_token(struct lexer *lex)
           return TK_NAME;
 
         case EOF:
-          obs_1grow(lex->pool, '\0');
+          xobs_1grow(lex->pool, '\0');
           return TK_NAME;
 
         default:
-          obs_1grow(lex->pool, ch);
+          xobs_1grow(lex->pool, ch);
           break;
         }
       }
@@ -520,7 +520,7 @@ properties_load(const char *pathname, PROPERTIES *reuse)
     p = malloc(sizeof(*p));
     if (!p)
       return NULL;
-    obs_init(&p->pool_);
+    xobs_init(&p->pool_);
 
     p->root = NULL;
     p->filename = NULL;
@@ -530,12 +530,12 @@ properties_load(const char *pathname, PROPERTIES *reuse)
     p = reuse;
 
   if (pathname) {
-    p->filename = obs_copy0(&p->pool_, pathname, strlen(pathname));
+    p->filename = xobs_copy0(&p->pool_, pathname, strlen(pathname));
 
     if (p->lex)
       free_lexer(p->lex);
 
-    p->lex = obs_alloc(&p->pool_, sizeof(*p->lex));
+    p->lex = xobs_alloc(&p->pool_, sizeof(*p->lex));
     init_lexer(&p->pool_, p->lex, pathname);
 
     parse(p->lex, &p->root);
@@ -555,7 +555,7 @@ properties_close(PROPERTIES *props)
   }
 
   free_lexer(props->lex);
-  obs_free(&props->pool_, NULL);
+  xobs_free(&props->pool_, NULL);
   free(props);
 }
 
@@ -569,9 +569,9 @@ properties_put(PROPERTIES *props, const char *key, const char *value)
   if (p)
     HASH_DEL(props->root, p);
 
-  p = obs_alloc(&props->pool_, sizeof(*p));
-  p->key = obs_copy0(&props->pool_, key, strlen(key));
-  p->value = obs_copy0(&props->pool_, value, strlen(value));
+  p = xobs_alloc(&props->pool_, sizeof(*p));
+  p->key = xobs_copy0(&props->pool_, key, strlen(key));
+  p->value = xobs_copy0(&props->pool_, value, strlen(value));
 
   HASH_ADD_KEYPTR(hh, props->root, p->key, strlen(p->key), p);
 }

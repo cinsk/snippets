@@ -1,6 +1,8 @@
 #ifndef GETIPADDR_H__
 #define GETIPADDR_H__
 
+#include <netdb.h>
+
 /* This indirect using of extern "C" { ... } makes Emacs happy */
 #ifndef BEGIN_C_DECLS
 # ifdef __cplusplus

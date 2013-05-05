@@ -18,7 +18,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
-#include <obsutil.h>
+#include "obsutil.h"
 
 #ifdef _PTHREAD
 #include <pthread.h>

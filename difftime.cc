@@ -14,7 +14,7 @@ DIFFTIME {
 
 struct dfout : public std::unary_function<long, void> {
   void operator() (long diff) {
-    printf("diff: %ld\n", diff);
+    printf("dfout: diff: %ld\n", diff);
   }
 };
 
@@ -22,30 +22,32 @@ struct dfout : public std::unary_function<long, void> {
 int
 main(void)
 {
-  //struct timeval old, now;
-  long diff;
+  {
+    long diff;
+    DIFFTIME(diff) {
+      printf("work\n");
+      ::sleep(1);
+    }
+    printf("DIFF: %ld\n", diff);
+  }
 
-  //gettimeofday(&old, NULL);
   {
     DiffTime<dfout> df;
     printf("hello\n");
     ::sleep(1);
   }
 
-  //return 0;
+  long diff;
 
-  DIFFTIME {
+  DIFFTIME_BEGIN {
     long diff2;
     ::sleep(1);
-    DIFFTIME {
+    DIFFTIME_BEGIN {
       ::sleep(1);
     } END_DIFFTIME(diff2);
     printf("diff2: %lu\n", diff2);
   } END_DIFFTIME(diff);
 
-  //gettimeofday(&now, NULL);
-
-  //printf("%lu\n", diff_timeval(&now, &old));
   printf("diff: %lu\n", diff);
 
   return 0;

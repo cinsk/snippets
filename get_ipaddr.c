@@ -1,11 +1,9 @@
-#include <sys/types.h>
 #include <ifaddrs.h>
-#include <stdio.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <string.h>
-#include <stdlib.h>
-
+#include <stdio.h>
 #include "get_ipaddr.h"
 
 

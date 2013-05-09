@@ -224,7 +224,7 @@ ifs_fill(struct ifs *s)
 }
 
 
-static int __inline__
+static __inline__ int
 ifs_getc(struct ifs *s)
 {
   assert(s != NULL);
@@ -476,7 +476,11 @@ get_token(struct lexer *lex)
       else {                    /* non-escape sequence */
         switch (ch) {
         case '=':
+#if 0
         case ':':
+          /* TODO: if the value part contains ':' where the delimiter was '=',
+           * gettoken() can't handle this. -- cinsk */
+#endif
         case '\n':
           xobs_1grow(lex->pool, '\0');
 

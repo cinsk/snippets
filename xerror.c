@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 
+#define NO_MCONTEXT
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
 /* MacOSX deprecates <ucontext.h> */
@@ -197,6 +198,8 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
   void *trace[BACKTRACE_MAX];
   int ret;
 
+  (void)uctx_void;
+
   if (!backtrace_mode)
     return;
 
@@ -214,7 +217,7 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
            info->si_addr, pc);
 # endif
 #else
-    xerror(0, 0, "Got signal (%d) at address %08p", signo,
+    xerror(0, 0, "Got signal (%d) at address %8p", signo,
            info->si_addr);
 #endif  /* NO_MCONTEXT */
   }

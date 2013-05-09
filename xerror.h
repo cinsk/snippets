@@ -28,6 +28,8 @@
 
 BEGIN_C_DECLS
 
+extern const char *xbacktrace_executable;
+
 /*
  * xerror() is the same as error() in GLIBC.
  */

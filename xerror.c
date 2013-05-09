@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include <limits.h>
 
 #include <stdint.h>
 
@@ -36,6 +37,8 @@
 
 #define BACKTRACE_MAX   16
 
+const char *xbacktrace_executable __attribute__((weak)) = "/usr/bin/backtrace";
+
 /* glibc compatible name */
 const char *program_name __attribute__((weak)) = 0;
 
@@ -47,6 +50,7 @@ static void set_program_name(void) __attribute__((constructor));
 static FILE *xerror_stream = (FILE *)-1;
 
 static void bt_handler(int signo, siginfo_t *info, void *uctx_void);
+static void bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void);
 
 FILE *
 xerror_redirect(FILE *fp)
@@ -102,9 +106,13 @@ xbacktrace_on_signals(int signo, ...)
 
   memset(&act, 0, sizeof(act));
 
-  act.sa_sigaction = bt_handler;
+  if (xbacktrace_executable && access(xbacktrace_executable, X_OK) == 0)
+    act.sa_sigaction = bt_handler_gdb;
+  else
+    act.sa_sigaction = bt_handler;
+
   sigemptyset(&act.sa_mask);
-  act.sa_flags = SA_SIGINFO;
+  act.sa_flags = SA_SIGINFO | SA_RESETHAND;
 
   ret = sigaction(signo, &act, NULL);
   if (ret != 0) {
@@ -207,15 +215,22 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 # ifdef __APPLE__
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     uint64_t pc = uctx->uc_mcontext->__ss.__rip;
-    xerror(0, 0, "Got signal (%d) at address %8p, PC=[%08llx]", signo,
+    xerror(0, 0, "Got signal (%d) at address %8p, RIP=[%08llx]", signo,
            info->si_addr, pc);
 # elif defined(REG_EIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
-    xerror(0, 0, "Got signal (%d) at address [%0*lx], PC=[%0*lx]", signo,
+    xerror(0, 0, "Got signal (%d) at address [%0*lx], EIP=[%0*lx]", signo,
            sizeof(void *) * 2,
            (long)info->si_addr,
            sizeof(void *) * 2, (long)pc);
+# elif defined(REG_RIP) /* linux */
+    ucontext_t *uctx = (ucontext_t *)uctx_void;
+    greg_t pc = uctx->uc_mcontext.gregs[REG_RIP];
+    xerror(0, 0, "Got signal (%d) at address [%0*lx], RIP=[%0*lx]", signo,
+           (int)(sizeof(void *) * 2),
+           (long)info->si_addr,
+           (int)(sizeof(void *) * 2), (long)pc);
 # endif
 #else
     xerror(0, 0, "Got signal (%d) at address %8p", signo,
@@ -228,6 +243,8 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
    * None of functions that used below are async signal-safe.
    * Thus, this is not a portable code. -- cinsk
    */
+
+  fprintf(xerror_stream, "\nBacktrace:\n");
   ret = backtrace(trace, BACKTRACE_MAX);
   /* TODO: error check on backtrace(3)? */
 
@@ -237,6 +254,17 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 
   /* http://tldp.org/LDP/abs/html/exitcodes.html */
   exit(128 + signo);
+}
+
+
+static void
+bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
+{
+  char cmdbuf[LINE_MAX] = { 0, };
+
+  snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d", (int)getpid());
+  system(cmdbuf);
+
 }
 
 
@@ -255,6 +283,7 @@ void foo(int a, int b)
 {
   bar(a);
 }
+
 
 int
 main(int argc, char *argv[])

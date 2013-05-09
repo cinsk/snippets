@@ -8,7 +8,6 @@
 
 #include <stdint.h>
 
-#define NO_MCONTEXT
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
 /* MacOSX deprecates <ucontext.h> */
@@ -213,8 +212,10 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 # elif defined(REG_EIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
-    xerror(0, 0, "Got signal (%d) at address %8p, PC=[%08x]", signo,
-           info->si_addr, pc);
+    xerror(0, 0, "Got signal (%d) at address [%0*lx], PC=[%0*lx]", signo,
+           sizeof(void *) * 2,
+           (long)info->si_addr,
+           sizeof(void *) * 2, (long)pc);
 # endif
 #else
     xerror(0, 0, "Got signal (%d) at address %8p", signo,
@@ -222,6 +223,11 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 #endif  /* NO_MCONTEXT */
   }
 
+  /* WARNING!
+   *
+   * None of functions that used below are async signal-safe.
+   * Thus, this is not a portable code. -- cinsk
+   */
   ret = backtrace(trace, BACKTRACE_MAX);
   /* TODO: error check on backtrace(3)? */
 

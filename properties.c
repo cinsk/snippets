@@ -49,6 +49,11 @@
 
 #include "properties.h"
 
+#ifdef TEST_PROPERTIES
+#define xobs_chunk_alloc malloc
+#define xobs_chunk_free  free
+#endif  /* TEST_PROPERTIES */
+
 #ifndef FALSE
 #define FALSE   0
 #define TRUE    (!FALSE)
@@ -589,15 +594,19 @@ properties_get(PROPERTIES *props, const char *key)
 int
 properties_enum(PROPERTIES *props,
                 int (*iter)(const char *key, const char *value, void *data),
+                const char *pattern,
                 void *data)
 {
   struct property *p, *tmp;
   int count = 0;
 
   HASH_ITER(hh, props->root, p, tmp) {
-    if (iter(p->key, p->value, data) == -1)
-      break;
-    count++;
+    if (!pattern || (pattern && fnmatch(pattern, p->key, 0) == 0)) {
+      if (iter(p->key, p->value, data) == -1)
+        break;
+
+      count++;
+    }
   }
 
   return count;
@@ -620,7 +629,9 @@ main(int argc, char *argv[])
 
   props = properties_load(argv[1], NULL);
 
-  properties_enum(props, myiter, NULL);
+  printf("--\n");
+
+  properties_enum(props, myiter, argv[2], NULL);
 
   printf("--\n");
 

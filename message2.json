@@ -1,0 +1,16 @@
+{ 
+    "default2": {
+        "type": "file",
+        "pathname": "/dev/stdout",
+        "time": "%FT%T",
+        "prologue": "[%P:%h] (%T) ",
+        "level": "info"
+    },
+    "log2": {
+        "type": "file",
+        "pathname": "msg.out",
+        "level": "debug"
+    },
+    "multi": "there!"
+}
+

@@ -1,0 +1,22 @@
+{ 
+    "default": {
+        "type": "file",
+        "pathname": "/dev/stdout",
+        "time": "%FT%T",
+        "prologue": "[%P:%h] (%T) ",
+        "level": "info"
+    },
+    "log": {
+        "type": "file",
+        "pathname": "msg.out",
+        "level": "debug"
+    },
+    "multi": {
+        "type": "multiplex",
+        "children": ["default", "log"],
+        "time": "%FT%T",
+        "prologue": "[%P:%h] (%t) %l ",
+        "level" : "debug"
+    }
+}
+

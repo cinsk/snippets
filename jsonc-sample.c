@@ -12,8 +12,58 @@ struct json_object *json_object_object_getv(struct json_object *obj,
                                             const char *keys[],
                                             size_t nkeys);
 
+
 int
-main(int argc, const char *argv[])
+main(int argc, char *argv[])
+{
+  /* Usage: ./a.out SRC1 SRC2
+   *
+   * merge json document SRC1 and SRC2 into one.
+   *
+   * if SRC1 and SRC2 has the same key, the value in SRC1 will be
+   * overwritten.
+   */
+  struct json_object *json1;
+  struct json_object *json2;
+  struct json_object *json3;
+
+  json1 = json_object_from_file(argv[1]);
+  json2 = json_object_from_file(argv[2]);
+
+  json3 = json_object_new_object();
+  //json_object_array_add(json3, json1);
+  //json_object_array_add(json3, json2);
+
+  //json_object_to_file("/dev/stdout", json3);
+
+  {
+    json_object_object_foreach(json1, key, val) {
+      fprintf(stderr, "adding %s\n", key);
+      json_object_object_add(json3, key, val);
+      json_object_get(val);
+    }
+  }
+
+  {
+    json_object_object_foreach(json2, key, val) {
+      fprintf(stderr, "adding %s\n", key);
+      json_object_object_add(json3, key, val);
+      json_object_get(val);
+    }
+  }
+
+  json_object_to_file("/dev/stdout", json3);
+
+  json_object_put(json1);
+  json_object_put(json2);
+  json_object_put(json3);
+
+  return 0;
+}
+
+
+int
+main_lookup(int argc, const char *argv[])
 {
   struct json_object *json;
   struct json_object *obj;
@@ -64,6 +114,7 @@ json_object_object_vget(struct json_object *obj, va_list ap)
   return obj;
 }
 
+
 struct json_object *
 json_object_object_getv(struct json_object *obj, const char *keys[],
                         size_t nkeys)
@@ -79,6 +130,3 @@ json_object_object_getv(struct json_object *obj, const char *keys[],
   }
   return obj;
 }
-
-
-

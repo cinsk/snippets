@@ -96,6 +96,7 @@ extern const char *properties_get(PROPERTIES *props, const char *key);
 extern int properties_enum(PROPERTIES *props,
                            int (*iter)(const char *key, const char *value,
                                        void *data),
+                           const char *pattern,
                            void *data);
 
 END_C_DECLS

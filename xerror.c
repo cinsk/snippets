@@ -10,12 +10,6 @@
 #include <stdint.h>
 #include <sys/time.h>
 
-#define SEC_TIMESTAMP
-
-#if (defined(SEC_TIMESTAMP) && defined(__Android__))
-#include <time.h>
-#endif
-
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
 /* MacOSX deprecates <ucontext.h> */
@@ -101,26 +95,6 @@ set_program_name(void)
 #endif
 
 }
-
-#if defined (SEC_TIMESTAMP)
-unsigned int GetTickCount()
-{
-#if defined (__Android__)
-  struct timespec now;
-  int err = clock_gettime(CLOCK_MONOTONIC, &now);
-  return now.tv_sec*1000000000LL + now.tv_nsec;
-#else
-  struct timeval gettick;
-  unsigned int tick;
-
-  gettimeofday(&gettick, NULL);
-
-  tick = gettick.tv_sec*1000 + gettick.tv_usec/1000;
-
-  return tick;
-#endif
-}
-#endif
 
 
 int
@@ -215,14 +189,10 @@ xmessage(int progname, int code, const char *format, va_list ap)
   if (progname && program_name)
     fprintf(xerror_stream, "%s: ", program_name);
 
-#if defined(SEC_TIMESTAMP)
-  fprintf(stderr, "%u, ", GetTickCount());
-#endif
-
   vfprintf(xerror_stream, format, ap);
 
   if (code) {
-#ifdef _GNU_SOURCE
+#if defined(_GNU_SOURCE) && !defined(__APPLE__)
     fprintf(xerror_stream, ": %s", strerror_r(code, errbuf, BUFSIZ));
 #else
     /* We'll use XSI-compliant strerror_r() */

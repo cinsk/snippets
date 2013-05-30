@@ -8,6 +8,13 @@
 #include <limits.h>
 
 #include <stdint.h>
+#include <sys/time.h>
+
+#define SEC_TIMESTAMP
+
+#if (defined(SEC_TIMESTAMP) && defined(__Android__))
+#include <time.h>
+#endif
 
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
@@ -95,6 +102,26 @@ set_program_name(void)
 
 }
 
+#if defined (SEC_TIMESTAMP)
+unsigned int GetTickCount()
+{
+#if defined (__Android__)
+  struct timespec now;
+  int err = clock_gettime(CLOCK_MONOTONIC, &now);
+  return now.tv_sec*1000000000LL + now.tv_nsec;
+#else
+  struct timeval gettick;
+  unsigned int tick;
+
+  gettimeofday(&gettick, NULL);
+
+  tick = gettick.tv_sec*1000 + gettick.tv_usec/1000;
+
+  return tick;
+#endif
+}
+#endif
+
 
 int
 xbacktrace_on_signals(int signo, ...)
@@ -172,6 +199,7 @@ void
 xmessage(int progname, int code, const char *format, va_list ap)
 {
   char errbuf[BUFSIZ];
+  int saved_errno = errno;
 
   if (xerror_stream == (FILE *)-1)
     xerror_stream = stderr;
@@ -187,15 +215,32 @@ xmessage(int progname, int code, const char *format, va_list ap)
   if (progname && program_name)
     fprintf(xerror_stream, "%s: ", program_name);
 
+#if defined(SEC_TIMESTAMP)
+  fprintf(stderr, "%u, ", GetTickCount());
+#endif
+
   vfprintf(xerror_stream, format, ap);
 
   if (code) {
+#ifdef _GNU_SOURCE
+    fprintf(xerror_stream, ": %s", strerror_r(code, errbuf, BUFSIZ));
+#else
+    /* We'll use XSI-compliant strerror_r() */
+    errno = 0;
     if (strerror_r(code, errbuf, BUFSIZ) == 0)
       fprintf(xerror_stream, ": %s", errbuf);
+    else if (errno == ERANGE)
+      fprintf(xerror_stream, ": [xerror] invalid error code");
+    else
+      fprintf(xerror_stream, ": [xerror] strerror_r(3) failed (errno=%d)",
+              errno);
+#endif  /* _GNU_SOURCE */
   }
+
   fputc('\n', xerror_stream);
 
   funlockfile(xerror_stream);
+  errno = saved_errno;
 }
 
 

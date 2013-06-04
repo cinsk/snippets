@@ -1,4 +1,7 @@
-#!/bin/sh
+#!/bin/bash
+
+# Stolen from:
+#   http://www.samba.org/ftp/unpacked/junkcode/segv_handler/
 
 # we want everything on stderr, so the program is not disturbed
 exec 1>&2

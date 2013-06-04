@@ -1,0 +1,28 @@
+#!/bin/sh
+
+# we want everything on stderr, so the program is not disturbed
+exec 1>&2
+
+if test $# -ne 2 -a $# -ne 1; then
+    echo "usage: $0 PID [BACKTRACE-FILE]" 1>&2
+    exit 1
+fi
+
+PID=$1
+TMPFILE=/tmp/gdb.$$
+trap "rm -f $TMPFILE; exit 1" SIGINT SIGHUP   
+cat << EOF  > $TMPFILE 
+set height 0
+bt full
+thread apply all bt full
+quit
+EOF
+
+if test -z "$2"; then
+    BTFILE=gdb.$PID
+else
+    BTFILE=$2
+fi
+
+gdb -batch -x $TMPFILE --pid $PID < /dev/null 2>&1 | tee $BTFILE
+/bin/rm -f $TMPFILE

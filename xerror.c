@@ -107,7 +107,8 @@ xbacktrace_on_signals(int signo, ...)
 
   memset(&act, 0, sizeof(act));
 
-  if (xbacktrace_executable && access(xbacktrace_executable, X_OK) == 0)
+  if (xbacktrace_executable && access(xbacktrace_executable, X_OK) == 0 &&
+      getenv("XBACKTRACE_NOGDB") == 0)
     act.sa_sigaction = bt_handler_gdb;
   else
     act.sa_sigaction = bt_handler;
@@ -275,11 +276,31 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 static void
 bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
 {
-  char cmdbuf[LINE_MAX] = { 0, };
+  static char cmdbuf[LINE_MAX] = { 0, };
+  static char cwd[PATH_MAX];
 
-  snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d", (int)getpid());
+  char *file = getenv("XERROR_BACKTRACE_FILE");
+
+  if (file)
+    snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d %s.%d",
+             (int)getpid(), file, (int)getpid());
+  else {
+    if (getcwd(cwd, PATH_MAX) == 0)
+      cwd[0] = '\0';
+
+    if (getppid() == 1 || strcmp(cwd, "/") == 0) {
+      if (access("/var/log", W_OK) == 0)
+        snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d /var/log/gdb.%d",
+                 (int)getpid(), (int)getpid());
+      else
+        snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d /tmp/gdb.%d",
+                 (int)getpid(), (int)getpid());
+    }
+    else
+      snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d", (int)getpid());
+  }
+
   system(cmdbuf);
-
 }
 
 

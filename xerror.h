@@ -31,6 +31,31 @@ BEGIN_C_DECLS
 extern const char *xbacktrace_executable;
 
 /*
+ * xerror module now support ignore file (".xerrignore").
+ *
+ * If the source filename that calls xdebug() is matched to the
+ * patterns in ".xerrignore", then xdebug() will not print the message
+ * but simply return.
+ *
+ * xerror_init() will search ".xerrignore" file in the current working
+ * directory, and tries to find the file until it reaches the root
+ * directory (like how GDB does for ".gdbinit").
+ *
+ * The contents of .xerrignore is very simple.  Empty lines and lines
+ * with first character '#' are ignored.  Each line may hold one
+ * wildcard pattern.  See fnmatch(3) for more.
+ */
+
+/*
+ * Recommended way to initialize xerror module.
+ *
+ * PROGRAM_NAME will override the name of the program if non-zero.
+ * IGNORE_SEARCH_DIR will override the default directory to find ".xerrignore".
+ *
+ */
+extern int xerror_init(const char *program_name, const char *ignore_search_dir);
+
+/*
  * xerror() is the same as error() in GLIBC.
  */
 extern void xerror(int status, int code, const char *format, ...)
@@ -54,7 +79,8 @@ extern int xifdebug(void);
 extern void xdebug_(int code, const char *format, ...)
   __attribute__((format (printf, 2, 3)));
 
-extern void xmessage(int progname, int code, const char *format, va_list ap);
+extern void xmessage(int progname, int code, int ignore,
+                     const char *format, va_list ap);
 
 /*
  * By default, all x*() functions will send the output to STDERR.

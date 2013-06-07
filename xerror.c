@@ -9,6 +9,10 @@
 
 #include <stdint.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <fnmatch.h>
 
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
@@ -37,6 +41,8 @@
 #endif
 
 #define BACKTRACE_MAX   16
+#define IGNORE_ENVNAME  "XERROR_IGNORES"
+#define IGNORE_FILENAME ".xerrignore"
 
 const char *xbacktrace_executable __attribute__((weak)) = "/usr/bin/backtrace";
 
@@ -52,6 +58,14 @@ static FILE *xerror_stream = (FILE *)-1;
 
 static void bt_handler(int signo, siginfo_t *info, void *uctx_void);
 static void bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void);
+
+
+static int ign_reserve(void);
+static int ign_load(const char *basedir);
+static int ign_load_file(const char *pathname);
+static int ign_match(const char *src);
+
+static void ign_free(void) __attribute__((destructor));
 
 FILE *
 xerror_redirect(FILE *fp)
@@ -141,7 +155,7 @@ xerror(int status, int code, const char *format, ...)
   va_list ap;
 
   va_start(ap, format);
-  xmessage(1, code, format, ap);
+  xmessage(1, code, 0, format, ap);
   va_end(ap);
 
   if (status)
@@ -165,13 +179,13 @@ xdebug_(int code, const char *format, ...)
     return;
 
   va_start(ap, format);
-  xmessage(0, code, format, ap);
+  xmessage(0, code, 1, format, ap);
   va_end(ap);
 }
 
 
 void
-xmessage(int progname, int code, const char *format, va_list ap)
+xmessage(int progname, int code, int ignore, const char *format, va_list ap)
 {
   char errbuf[BUFSIZ];
   int saved_errno = errno;
@@ -181,6 +195,18 @@ xmessage(int progname, int code, const char *format, va_list ap)
 
   if (!xerror_stream)
     return;
+
+  if (ignore) {
+    va_list vcp;
+    int pred;
+
+    va_copy(vcp, ap);
+    pred = ign_match((const char *)va_arg(vcp, const char *));
+    va_end(vcp);
+
+    if (pred)
+      return;
+  }
 
   fflush(stdout);
   fflush(xerror_stream);
@@ -304,6 +330,161 @@ bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
 }
 
 
+static struct {
+  size_t cap;
+  size_t cur;
+  char **pat;
+} ignore = { 0, 0, 0 };
+
+
+static int
+ign_reserve(void)
+{
+  void *p;
+
+  if (ignore.cur >= ignore.cap) {
+    if (!ignore.cap)
+      ignore.cap = 32;
+    ignore.cap *= 2;
+    p = realloc(ignore.pat, ignore.cap);
+    if (!p)
+      return -1;
+
+    ignore.pat = p;
+  }
+  return 0;
+}
+
+
+static int
+ign_load_file(const char *pathname)
+{
+  FILE *fp;
+  char *line = 0;
+  size_t lnsize = 0;
+  ssize_t len;
+
+  fp = fopen(pathname, "r");
+  if (!fp)
+    return -1;
+
+  while ((len = getline(&line, &lnsize, fp)) != -1) {
+    if (line[len - 1] == '\n')
+      line[len - 1] = '\0';
+    if (line[0] == '\0' || line[0] == '#')
+      continue;
+
+    if (ign_reserve() == -1) {
+      /* TODO: error handling */
+      break;
+    }
+
+    ignore.pat[ignore.cur++] = strdup(line);
+  }
+  free(line);
+  fclose(fp);
+}
+
+
+static int
+ign_load(const char *basedir)
+{
+  const char *env = getenv(IGNORE_ENVNAME);
+  int cwdfd;
+  char cwdbuf[PATH_MAX], *cwd;
+
+  if (env && ign_load_file(env) == 0)
+    return 0;
+
+  cwdfd = open(".", O_RDONLY);
+  if (cwdfd == -1)
+    return -1;
+
+  while (1) {
+    if (ign_load_file(IGNORE_FILENAME) == 0)
+      break;
+
+    cwd = getcwd(cwdbuf, PATH_MAX);
+    if (cwd && strcmp(cwd, "/") == 0)
+      break;
+
+    if (chdir("..") == -1)
+      break;
+  }
+
+  fchdir(cwdfd);
+  close(cwdfd);
+  return 0;
+}
+
+
+static int
+ign_match(const char *src)
+{
+  size_t i;
+
+  for (i = 0; i < ignore.cur; i++) {
+    if (fnmatch(ignore.pat[i], src, FNM_FILE_NAME | FNM_LEADING_DIR) == 0)
+      return 1;
+  }
+  return 0;
+}
+
+
+static void
+ign_free(void)
+{
+  size_t i;
+  char **pat = ignore.pat;
+  size_t cur = ignore.cur;
+
+  ignore.cur = 0;
+  ignore.pat = 0;
+  ignore.cap = 0;
+
+  for (i = 0; i < cur; i++)
+    free(pat[i]);
+
+  free(pat);
+}
+
+
+int
+xerror_init(const char *prog_name, const char *ignore_search_dir)
+{
+  if (prog_name)
+    program_name = prog_name;
+
+  ign_load(ignore_search_dir);
+  return 0;
+}
+
+
+#if 0
+static int
+load_ignore()
+{
+  int cwd_fd;
+  FILE *fp;
+
+  cwd_fd = open(".", O_RDONLY);
+  if (cwd_fd == -1)
+    return -1;
+
+  while (1) {
+    fp = fopen(".xerrignore", "r");
+    if (!fp) {
+      if (chdir("..") == -1)
+
+
+
+  if (fchdir(cwd_fd) == -1) {
+    fprintf(stderr, "warning: xerror can't revert the CWD.\n");
+    return -1;
+  }
+}
+#endif  /* 0 */
+
 #ifdef _TEST_XERROR
 #include <errno.h>
 
@@ -324,9 +505,12 @@ void foo(int a, int b)
 int
 main(int argc, char *argv[])
 {
+  xerror_init(0, 0);
+
   xbacktrace_on_signals(SIGSEGV, SIGILL, SIGFPE, SIGBUS, SIGTRAP, 0);
 
-  xdebug(0, "program_name = %s\n", program_name);
+  xdebug(0, "program_name = %s", program_name);
+  xdebug(0, "this is debug message %d", 1);
 
   if (argc != 2)
     xerror(1, 0, "argument required, argc = %d", argc);

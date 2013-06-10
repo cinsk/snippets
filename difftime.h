@@ -31,6 +31,7 @@
  * authorization.
  */
 
+#include <time.h>
 #include <sys/time.h>
 
 /* This indirect using of extern "C" { ... } makes Emacs happy */
@@ -108,6 +109,24 @@ df__gettime__(void)
                              gettimeofday(&e_nd__.tv, 0),               \
                              (store) = diff_timeval(&e_nd__.tv, &t_v__.tv) \
                              )
+
+struct dc__ {
+  clock_t clk;
+  int cont;
+};
+
+
+static __inline__ struct dc__
+dc__gettime__(void)
+{
+  struct dc__ dc;
+  dc.clk = clock();
+  dc.cont = 1;
+  return dc;
+}
+
+#define DIFFCLOCK(store) for (struct dc__ c_k__ = dc__gettime__(); \
+                              c_k__.cont--; (store) = clock() - c_k__.clk)
 #endif
 
 END_C_DECLS

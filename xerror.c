@@ -119,6 +119,9 @@ xbacktrace_on_signals(int signo, ...)
 
   int ret = 0;
 
+  if (getenv("XBACKTRACE") == 0)
+    return 0;
+
   memset(&act, 0, sizeof(act));
 
   if (xbacktrace_executable && access(xbacktrace_executable, X_OK) == 0 &&
@@ -246,6 +249,8 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 {
   void *trace[BACKTRACE_MAX];
   int ret;
+  char *file = getenv("XBACKTRACE_FILE");
+  static char bt_filename[PATH_MAX];
 
   (void)uctx_void;
 
@@ -286,12 +291,25 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
    * Thus, this is not a portable code. -- cinsk
    */
 
+  /*
+   * TODO: adhere XBACKTRACE_FILE environment variable.
+   */
   fprintf(xerror_stream, "\nBacktrace:\n");
   ret = backtrace(trace, BACKTRACE_MAX);
   /* TODO: error check on backtrace(3)? */
 
   fflush(xerror_stream);
-  backtrace_symbols_fd(trace, ret, fileno(xerror_stream));
+  if (!file)
+    backtrace_symbols_fd(trace, ret, fileno(xerror_stream));
+  else {
+    int fd;
+    snprintf(bt_filename, PATH_MAX, "%s.%d", file, (int)getpid());
+    fd = open(bt_filename, O_CREAT | O_WRONLY, 0600);
+    if (fd != -1) {
+      backtrace_symbols_fd(trace, ret, fd);
+      close(fd);
+    }
+  }
   fflush(xerror_stream);
 
   /* http://tldp.org/LDP/abs/html/exitcodes.html */
@@ -305,7 +323,7 @@ bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
   static char cmdbuf[LINE_MAX] = { 0, };
   static char cwd[PATH_MAX];
 
-  char *file = getenv("XERROR_BACKTRACE_FILE");
+  char *file = getenv("XBACKTRACE_FILE");
 
   if (file)
     snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d %s.%d",

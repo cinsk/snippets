@@ -47,6 +47,17 @@ extern const char *xbacktrace_executable;
  */
 
 /*
+ * Environment Variables:
+ *
+ * - XBACKTRACE: if not defined, xbacktrace_on_signals() will do nothing.
+ * - XBACKTRACE_NOGDB: if defined, xbacktrace_on_signals will not use GDB(1).
+ * - XBACKTRACE_FILE: This is the filename template for the backtrace info.
+ *                    The actual filename will be $XBACKTRACE_FILE.PID,
+ *                    where PID is the pid of the process.
+ * - XERROR_IGNORES: filename for the ignore patterns.
+ */
+
+/*
  * Recommended way to initialize xerror module.
  *
  * PROGRAM_NAME will override the name of the program if non-zero.

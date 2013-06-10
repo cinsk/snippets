@@ -13,6 +13,11 @@ fi
 
 PID=$1
 TMPFILE=/tmp/gdb.$$
+
+if which dirname >&/dev/null; then
+    mkdir -p `dirname $TMPFILE`
+fi
+
 trap "rm -f $TMPFILE; exit 1" SIGINT SIGHUP   
 cat << EOF  > $TMPFILE 
 set height 0
@@ -27,5 +32,16 @@ else
     BTFILE=$2
 fi
 
-gdb -batch -x $TMPFILE --pid $PID < /dev/null 2>&1 | tee $BTFILE
-/bin/rm -f $TMPFILE
+if which dirname >&/dev/null; then
+    mkdir -p `dirname $BTFILE`
+fi
+
+BTTMP=.${BTFILE}.tmp
+
+trap "rm -f $TMPFILE $BTTMP; exit 1" SIGINT SIGHUP   
+
+gdb -batch -x $TMPFILE --pid $PID < /dev/null 2>&1 | tee ${BTTMP}
+#gdb --batch -x $TMPFILE --pid $PID 2>&1 #| tee $BTFILE
+mv ${BTTMP} ${BTFILE}
+/bin/rm -f $TMPFILE $BTTMP
+exit 0

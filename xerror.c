@@ -116,11 +116,22 @@ xbacktrace_on_signals(int signo, ...)
 {
   struct sigaction act;
   va_list ap;
+#ifdef USE_ALTSTACK
+  stack_t ss;
+#endif
 
   int ret = 0;
 
   if (getenv("XBACKTRACE") == 0)
     return 0;
+
+#ifdef USE_ALTSTACK
+  ss.ss_sp = malloc(SIGSTKSZ);
+  ss.ss_size = SIGSTKSZ;
+  ss.ss_flags = 0;
+  if (sigaltstack(&ss, NULL) == -1)
+    xerror(0, errno, "can't register altstack");
+#endif  /* USE_ALTSTACK */
 
   memset(&act, 0, sizeof(act));
 
@@ -132,6 +143,9 @@ xbacktrace_on_signals(int signo, ...)
 
   sigemptyset(&act.sa_mask);
   act.sa_flags = SA_SIGINFO | SA_RESETHAND;
+#ifdef USE_ALTSTACK
+  act.sa_flags |= SA_ONSTACK;
+#endif
 
   ret = sigaction(signo, &act, NULL);
   if (ret != 0) {
@@ -258,30 +272,36 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
     return;
 
   {
+    if (xerror_stream == (FILE *)-1)
+      xerror_stream = stderr;
+
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     uint64_t pc = uctx->uc_mcontext->__ss.__rip;
-    xerror(0, 0, "Got signal (%d) at address %8p, RIP=[%08llx]", signo,
-           info->si_addr, pc);
+    fprintf(xerror_stream,
+            "Got signal (%d) at address %8p, RIP=[%08llx]\n", signo,
+            info->si_addr, pc);
 # elif defined(REG_EIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
-    xerror(0, 0, "Got signal (%d) at address [%0*lx], EIP=[%0*lx]", signo,
-           sizeof(void *) * 2,
-           (long)info->si_addr,
-           sizeof(void *) * 2, (long)pc);
+    fprintf(xerror_stream,
+            "Got signal (%d) at address [%0*lx], EIP=[%0*lx]\n", signo,
+            (int)(sizeof(void *) * 2),
+            (long)info->si_addr,
+            (int)(sizeof(void *) * 2), (long)pc);
 # elif defined(REG_RIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_RIP];
-    xerror(0, 0, "Got signal (%d) at address [%0*lx], RIP=[%0*lx]", signo,
-           (int)(sizeof(void *) * 2),
-           (long)info->si_addr,
-           (int)(sizeof(void *) * 2), (long)pc);
+    fprintf(xerror_stream,
+            "Got signal (%d) at address [%0*lx], RIP=[%0*lx]\n", signo,
+            (int)(sizeof(void *) * 2),
+            (long)info->si_addr,
+            (int)(sizeof(void *) * 2), (long)pc);
 # endif
 #else
-    xerror(0, 0, "Got signal (%d) at address %8p", signo,
-           info->si_addr);
+    fprintf(xerror_stream, "Got signal (%d) at address %8p\n", signo,
+            info->si_addr);
 #endif  /* NO_MCONTEXT */
   }
 
@@ -401,6 +421,8 @@ ign_load_file(const char *pathname)
   }
   free(line);
   fclose(fp);
+
+  return 0;
 }
 
 

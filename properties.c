@@ -321,7 +321,8 @@ init_lexer(struct xobs *pool, struct lexer *lex, const char *filename)
 static void
 free_lexer(struct lexer *lex)
 {
-  ifs_close(lex->is);
+  if (lex)
+    ifs_close(lex->is);
   //xobs_free(lex->pool, NULL);
 }
 

@@ -55,7 +55,10 @@ int backtrace_mode __attribute__((weak)) = 1;
 static void set_program_name(void) __attribute__((constructor));
 
 static FILE *xerror_stream = (FILE *)-1;
+static int xerror_fd = -1;
 
+
+static char *xerror_bt_filename = 0;
 static void bt_handler(int signo, siginfo_t *info, void *uctx_void);
 static void bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void);
 
@@ -64,8 +67,10 @@ static int ign_reserve(void);
 static int ign_load(const char *basedir);
 static int ign_load_file(const char *pathname);
 static int ign_match(const char *src);
+static void ign_free(void);
 
-static void ign_free(void) __attribute__((destructor));
+static void xerror_finalize(void) __attribute__((destructor));
+
 
 FILE *
 xerror_redirect(FILE *fp)
@@ -76,8 +81,14 @@ xerror_redirect(FILE *fp)
 
   if (old == (FILE *)-1)
     old = NULL;
+  else
+    fflush(old);
+
+  fflush(fp);
+  setvbuf(fp, 0, _IONBF, 0);
 
   xerror_stream = fp;
+  xerror_fd = fileno(fp);
 
   return old;
 }
@@ -207,8 +218,9 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
   char errbuf[BUFSIZ];
   int saved_errno = errno;
 
-  if (xerror_stream == (FILE *)-1)
-    xerror_stream = stderr;
+  if (xerror_stream == (FILE *)-1) {
+    xerror_redirect(stderr);
+  }
 
   if (!xerror_stream)
     return;
@@ -258,12 +270,58 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
 }
 
 
+static char *
+long2str(char *buf, size_t bufsize, long l, int base)
+{
+  char *p = buf + bufsize - 1;
+  int negative = 0;
+
+  if (bufsize == 0)
+    return 0;
+
+  *p-- = '\0';
+
+  do {
+    long d = l % base;
+
+    if (d < 0) {
+      negative = 1;
+      d = -d;
+    }
+
+    if (p < buf)
+      return 0;
+    *p-- = "01234567890ABCDEF"[d];
+    l /= base;
+  } while (l != 0);
+
+  if (negative && base == 10) {
+    if (p < buf)
+      return 0;
+    *p-- = '-';
+  }
+
+  return p + 1;
+}
+
+
+#define NUMBUF_MAX      32
+
+#define WRITE_NUM(fd, num, base)        do {             \
+  char nbuf[NUMBUF_MAX];                                 \
+  char *n;                                               \
+  n = long2str(nbuf, NUMBUF_MAX, (num), (base));         \
+  write((fd), n, strlen(n));                             \
+  } while (0)
+
+#define WRITE_STR(fd, s)        write((fd), (s), strlen(s))
+
 static void
 bt_handler(int signo, siginfo_t *info, void *uctx_void)
 {
   void *trace[BACKTRACE_MAX];
   int ret;
-  char *file = getenv("XBACKTRACE_FILE");
+
   static char bt_filename[PATH_MAX];
 
   (void)uctx_void;
@@ -279,29 +337,52 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 # ifdef __APPLE__
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     uint64_t pc = uctx->uc_mcontext->__ss.__rip;
-    fprintf(xerror_stream,
-            "Got signal (%d) at address %8p, RIP=[%08llx]\n", signo,
-            info->si_addr, pc);
+
+    WRITE_STR(xerror_fd, "Got signal (");
+    WRITE_NUM(xerror_fd, signo, 10);
+
+    WRITE_STR(xerror_fd, ") at address 0x");
+    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(xerror_fd, ", RIP=[0x");
+    WRITE_NUM(xerror_fd, pc, 16);
+    WRITE_STR(xerror_fd, "]\n");
+
 # elif defined(REG_EIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
-    fprintf(xerror_stream,
-            "Got signal (%d) at address [%0*lx], EIP=[%0*lx]\n", signo,
-            (int)(sizeof(void *) * 2),
-            (long)info->si_addr,
-            (int)(sizeof(void *) * 2), (long)pc);
+
+    WRITE_STR(xerror_fd, "Got signal (");
+    WRITE_NUM(xerror_fd, signo, 10);
+
+    WRITE_STR(xerror_fd, ") at address 0x");
+    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(xerror_fd, ", EIP=[0x");
+    WRITE_NUM(xerror_fd, pc, 16);
+    WRITE_STR(xerror_fd, "]\n");
+
 # elif defined(REG_RIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_RIP];
-    fprintf(xerror_stream,
-            "Got signal (%d) at address [%0*lx], RIP=[%0*lx]\n", signo,
-            (int)(sizeof(void *) * 2),
-            (long)info->si_addr,
-            (int)(sizeof(void *) * 2), (long)pc);
+
+    WRITE_STR(xerror_fd, "Got signal (");
+    WRITE_NUM(xerror_fd, signo, 10);
+
+    WRITE_STR(xerror_fd, ") at address 0x");
+    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(xerror_fd, ", RIP=[0x");
+    WRITE_NUM(xerror_fd, pc, 16);
+    WRITE_STR(xerror_fd, "]\n");
+
 # endif
 #else
-    fprintf(xerror_stream, "Got signal (%d) at address %8p\n", signo,
-            info->si_addr);
+
+    WRITE_STR(xerror_fd, "Got signal (");
+    WRITE_NUM(xerror_fd, signo, 10);
+
+    WRITE_STR(xerror_fd, ") at address 0x");
+    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(xerror_fd, "\n");
+
 #endif  /* NO_MCONTEXT */
   }
 
@@ -314,26 +395,36 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
   /*
    * TODO: adhere XBACKTRACE_FILE environment variable.
    */
-  fprintf(xerror_stream, "\nBacktrace:\n");
+  WRITE_STR(xerror_fd, "\nBacktrace:\n");
   ret = backtrace(trace, BACKTRACE_MAX);
   /* TODO: error check on backtrace(3)? */
 
-  fflush(xerror_stream);
-  if (!file)
-    backtrace_symbols_fd(trace, ret, fileno(xerror_stream));
+  // fflush(xerror_stream);
+
+  if (!xerror_bt_filename)
+    backtrace_symbols_fd(trace, ret, xerror_fd);
   else {
     int fd;
-    snprintf(bt_filename, PATH_MAX, "%s.%d", file, (int)getpid());
     fd = open(bt_filename, O_CREAT | O_WRONLY, 0600);
     if (fd != -1) {
       backtrace_symbols_fd(trace, ret, fd);
       close(fd);
     }
   }
-  fflush(xerror_stream);
+  // fflush(xerror_stream);
 
   /* http://tldp.org/LDP/abs/html/exitcodes.html */
-  exit(128 + signo);
+  // _exit(128 + signo);
+
+  {
+    struct sigaction sa;
+
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(signo, &sa, NULL);
+    raise(signo);
+  }
 }
 
 
@@ -489,41 +580,31 @@ ign_free(void)
 }
 
 
+static void
+xerror_finalize(void)
+{
+  ign_free();
+  free(xerror_bt_filename);
+}
+
 int
 xerror_init(const char *prog_name, const char *ignore_search_dir)
 {
+  char *file = getenv("XBACKTRACE_FILE");
+
   if (prog_name)
     program_name = prog_name;
 
   ign_load(ignore_search_dir);
+
+  xerror_redirect(stderr);
+
+  if (file)
+    asprintf(&xerror_bt_filename, "%s.%d", file, (int)getpid());
+
   return 0;
 }
 
-
-#if 0
-static int
-load_ignore()
-{
-  int cwd_fd;
-  FILE *fp;
-
-  cwd_fd = open(".", O_RDONLY);
-  if (cwd_fd == -1)
-    return -1;
-
-  while (1) {
-    fp = fopen(".xerrignore", "r");
-    if (!fp) {
-      if (chdir("..") == -1)
-
-
-
-  if (fchdir(cwd_fd) == -1) {
-    fprintf(stderr, "warning: xerror can't revert the CWD.\n");
-    return -1;
-  }
-}
-#endif  /* 0 */
 
 #ifdef _TEST_XERROR
 #include <errno.h>
@@ -539,6 +620,13 @@ static void bar(int a)
 void foo(int a, int b)
 {
   bar(a);
+}
+
+
+void
+print_long(int fd, long value, int base)
+{
+
 }
 
 

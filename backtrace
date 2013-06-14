@@ -36,7 +36,7 @@ if which dirname >&/dev/null; then
     mkdir -p `dirname $BTFILE`
 fi
 
-BTTMP=.${BTFILE}.tmp
+BTTMP=${BTFILE}.tmp
 
 trap "rm -f $TMPFILE $BTTMP; exit 1" SIGINT SIGHUP   
 

@@ -44,7 +44,7 @@
 #define IGNORE_ENVNAME  "XERROR_IGNORES"
 #define IGNORE_FILENAME ".xerrignore"
 
-const char *xbacktrace_executable __attribute__((weak)) = "/usr/bin/backtrace";
+const char *xbacktrace_executable __attribute__((weak)) = "backtrace";
 
 /* glibc compatible name */
 const char *program_name __attribute__((weak)) = 0;
@@ -58,7 +58,9 @@ static FILE *xerror_stream = (FILE *)-1;
 static int xerror_fd = -1;
 
 
+static int xerror_bt_filep = 0;
 static char *xerror_bt_filename = 0;
+static char *xerror_bt_command = 0;
 static void bt_handler(int signo, siginfo_t *info, void *uctx_void);
 static void bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void);
 
@@ -70,6 +72,7 @@ static int ign_match(const char *src);
 static void ign_free(void);
 
 static void xerror_finalize(void) __attribute__((destructor));
+static char *find_executable(const char *exe);
 
 
 FILE *
@@ -127,6 +130,7 @@ xbacktrace_on_signals(int signo, ...)
 {
   struct sigaction act;
   va_list ap;
+  char *exe;
 #ifdef USE_ALTSTACK
   stack_t ss;
 #endif
@@ -137,8 +141,10 @@ xbacktrace_on_signals(int signo, ...)
     return 0;
 
 #ifdef USE_ALTSTACK
-  ss.ss_sp = malloc(SIGSTKSZ);
-  ss.ss_size = SIGSTKSZ;
+  /* Why uses SIGSTKSZ * 2? -- Don't know why, but segfault.c in glibc
+   * uses it -- cinsk */
+  ss.ss_sp = malloc(SIGSTKSZ * 2);
+  ss.ss_size = SIGSTKSZ * 2;
   ss.ss_flags = 0;
   if (sigaltstack(&ss, NULL) == -1)
     xerror(0, errno, "can't register altstack");
@@ -146,11 +152,14 @@ xbacktrace_on_signals(int signo, ...)
 
   memset(&act, 0, sizeof(act));
 
-  if (xbacktrace_executable && access(xbacktrace_executable, X_OK) == 0 &&
-      getenv("XBACKTRACE_NOGDB") == 0)
+  exe = find_executable(xbacktrace_executable);
+
+  if (exe && getenv("XBACKTRACE_NOGDB") == 0)
     act.sa_sigaction = bt_handler_gdb;
   else
     act.sa_sigaction = bt_handler;
+
+  free(exe);
 
   sigemptyset(&act.sa_mask);
   act.sa_flags = SA_SIGINFO | SA_RESETHAND;
@@ -291,7 +300,7 @@ long2str(char *buf, size_t bufsize, long l, int base)
 
     if (p < buf)
       return 0;
-    *p-- = "01234567890ABCDEF"[d];
+    *p-- = "0123456789ABCDEF"[d];
     l /= base;
   } while (l != 0);
 
@@ -321,8 +330,6 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 {
   void *trace[BACKTRACE_MAX];
   int ret;
-
-  static char bt_filename[PATH_MAX];
 
   (void)uctx_void;
 
@@ -401,11 +408,11 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 
   // fflush(xerror_stream);
 
-  if (!xerror_bt_filename)
+  if (!xerror_bt_filep)
     backtrace_symbols_fd(trace, ret, xerror_fd);
   else {
     int fd;
-    fd = open(bt_filename, O_CREAT | O_WRONLY, 0600);
+    fd = open(xerror_bt_filename, O_CREAT | O_WRONLY, 0600);
     if (fd != -1) {
       backtrace_symbols_fd(trace, ret, fd);
       close(fd);
@@ -431,6 +438,7 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 static void
 bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
 {
+#if 0
   static char cmdbuf[LINE_MAX] = { 0, };
   static char cwd[PATH_MAX];
 
@@ -454,8 +462,20 @@ bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
     else
       snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d", (int)getpid());
   }
-
   system(cmdbuf);
+#endif  /* 0 */
+
+  system(xerror_bt_command);
+
+  {
+    struct sigaction sa;
+
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(signo, &sa, NULL);
+    raise(signo);
+  }
 }
 
 
@@ -585,6 +605,7 @@ xerror_finalize(void)
 {
   ign_free();
   free(xerror_bt_filename);
+  free(xerror_bt_command);
 }
 
 int
@@ -599,9 +620,52 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
 
   xerror_redirect(stderr);
 
-  if (file)
+  if (file) {
     asprintf(&xerror_bt_filename, "%s.%d", file, (int)getpid());
+    xerror_bt_filep = 1;
+  }
+  else
+    asprintf(&xerror_bt_filename, "backtrace.%d", (int)getpid());
 
+  asprintf(&xerror_bt_command, "backtrace %d %s.%d", (int)getpid(),
+           xerror_bt_filename, (int)getpid());
+
+  return 0;
+}
+
+
+static char *
+find_executable(const char *exe)
+{
+  char *path;
+  char *tok, *saveptr;
+  char *fpath, *fullpath;
+
+  path = getenv("PATH");
+  if (!path)
+    return 0;
+  path = strdup(path);
+  if (!path)
+    return 0;
+
+  tok = strtok_r(path, ":", &saveptr);
+  do {
+    if (!tok)
+      break;
+
+    asprintf(&fpath, "%s/%s", tok, exe);
+    fullpath = canonicalize_file_name(fpath);
+    free(fpath);
+
+    if (fullpath && access(fullpath, X_OK) == 0) {
+      free(path);
+      return fullpath;
+    }
+
+    free(fullpath);
+  } while ((tok = strtok_r(0, ":", &saveptr)) != 0);
+
+  free(path);
   return 0;
 }
 
@@ -635,7 +699,7 @@ main(int argc, char *argv[])
 {
   xerror_init(0, 0);
 
-  xbacktrace_on_signals(SIGSEGV, SIGILL, SIGFPE, SIGBUS, SIGTRAP, 0);
+  xbacktrace_on_signals(SIGSEGV, SIGILL, SIGFPE, SIGBUS, 0);
 
   xdebug(0, "program_name = %s", program_name);
   xdebug(0, "this is debug message %d", 1);

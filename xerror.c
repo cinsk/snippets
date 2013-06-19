@@ -654,7 +654,11 @@ find_executable(const char *exe)
       break;
 
     asprintf(&fpath, "%s/%s", tok, exe);
+#ifdef __USE_GNU
     fullpath = canonicalize_file_name(fpath);
+#else
+    fullpath = realpath(fpath, 0);
+#endif
     free(fpath);
 
     if (fullpath && access(fullpath, X_OK) == 0) {

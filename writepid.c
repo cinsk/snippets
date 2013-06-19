@@ -17,7 +17,8 @@
  */
 #define _GNU_SOURCE     1
 
-#include <assert.h>
+#if 0
+//#include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -85,9 +86,154 @@ writepid(const char *pathname, pid_t pid)
 
   return 0;
 }
+#endif  /* 0 */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+
+#include <unistd.h>
+#include <sys/stat.h>
+#include <libgen.h>
+
+#ifdef XERROR
+#include "xerror.h"
+#endif
+
+#include "writepid.h"
+
+static const char *writepid_pathname = 0;
+static struct stat writepid_stat;
+
+char *writepid_mkdir_template __attribute__((weak)) = WRITEPID_MKDIR_TEMPLATE;
+
+static void
+remove_pidfile(void)
+{
+  struct stat sbuf;
+
+  if (!writepid_pathname)
+    return;
+
+  if (stat(writepid_pathname, &sbuf) == -1)
+    goto err;
+
+  if (sbuf.st_ino == writepid_stat.st_ino &&
+      sbuf.st_size == writepid_stat.st_size &&
+      sbuf.st_mtime == sbuf.st_mtime) {
+    /* Assuming that WRITEPID_PATHNAME is the same as before */
+    /* Note that there is no way to guarantee that WRITEPID_PATHNAME
+     * is *the file* that this process had written. */
+    unlink(writepid_pathname);
+  }
+  else {
+#ifdef XERROR
+    xdebug(0, "pidfile(%s) seems not the same as it used to be, leaving it",
+           writepid_pathname);
+#endif
+  }
+
+ err:
+  free((void *)writepid_pathname);
+}
+
+
+int
+writepid(const char *pidfile, pid_t pid, int no_atexit)
+{
+  // Warning: PIDFILE must be canonicalized pathname.
+  int ret = -1;
+  int saved_errno;
+  char *cmdline = 0;
+  char *dname, *dname_ = strdup(pidfile);
+  FILE *fp;
+
+  if (!dname_)
+    return -1;
+
+  dname = dirname(dname_);
+  if (!dname) {
+    saved_errno = errno;
+    goto err;
+  }
+
+  if (asprintf(&cmdline, writepid_mkdir_template, dname) == -1) {
+    saved_errno = errno;
+    goto err;
+  }
+
+  ret = system(cmdline);
+  if (ret == -1 || ret == 127) {
+    saved_errno = errno;
+    free(cmdline);
+    goto err;
+  }
+  else if (WIFEXITED(ret) && WEXITSTATUS(ret) == 0)
+    ;                           /* pass */
+  else {
+#ifdef XERROR
+    if (WIFSIGNALED(ret))
+      xdebug(errno, "system(3): signal %d raised", WTERMSIG(ret));
+    else if (WIFEXITED(ret))
+      xdebug(errno, "system(3): nonzero exit status %d", WEXITSTATUS(ret));
+#endif  /* XERROR */
+
+    saved_errno = errno;
+    free(cmdline);
+    goto err;
+  }
+
+
+  free(cmdline);
+
+  fp = fopen(pidfile, "w");
+  if (!fp) {
+    saved_errno = errno;
+    goto err;
+  }
+  if (fprintf(fp, "%d\n", (pid > 0) ? (int)pid : (int)getpid()) < 0) {
+    saved_errno = errno;
+    fclose(fp);
+    goto err;
+  }
+  fclose(fp);
+
+  if (!no_atexit) {
+    writepid_pathname = strdup(pidfile);
+    if (!writepid_pathname) {
+      saved_errno = errno;
+      goto err;
+    }
+    if (stat(writepid_pathname, &writepid_stat) == -1) {
+      saved_errno = errno;
+      free((void *)writepid_pathname);
+      writepid_pathname = 0;
+      goto err;
+    }
+
+    if (atexit(remove_pidfile) == -1) {
+      saved_errno = errno;
+      free((void *)writepid_pathname);
+      writepid_pathname = 0;
+      goto err;
+    }
+  }
+
+  return 0;
+
+ err:
+  free(dname_);
+  errno = saved_errno;
+  return -1;
+}
 
 
 #ifdef TEST_WRITEPID
+#define SLEEP_INTERVAL  5
+
+char *writepid_mkdir_template = "echo Ahhhhhhhhh";
+
 int
 main(int argc, char *argv[])
 {
@@ -96,7 +242,9 @@ main(int argc, char *argv[])
     return 1;
   }
 
-  fprintf(stderr, "writepid returns %d\n", writepid(argv[1], -1));
+  fprintf(stderr, "writepid returns %d\n", writepid(argv[1], -1, 0));
+  fprintf(stderr, "sleeping %d second(s)...\n", SLEEP_INTERVAL);
+  sleep(SLEEP_INTERVAL);
   return 0;
 }
 

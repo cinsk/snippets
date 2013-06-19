@@ -33,17 +33,23 @@
 
 BEGIN_C_DECLS
 
+#ifndef WRITEPID_MKDIR_TEMPLATE
+#define WRITEPID_MKDIR_TEMPLATE "/bin/mkdir -p \"%s\" >&/dev/null"
+#endif
+
 /*
  * Record PID into the file PATHNAME.
  *
- * If PID is -1, writepid() uses the current process ID.  If any of
+ * If PID is 0, writepid() uses the current process ID.  If any of
  * the directory component in PATHNAME does not exist, writepid() will
  * create it, like 'mkdir -p' command.
  *
  * writepid() returns zero on success, otherwise returns -1 with errno
  * set.
  */
-extern int writepid(const char *pathname, pid_t pid);
+extern int writepid(const char *pathname, pid_t pid, int no_atexit);
+
+extern char *writepid_mkdir_template;
 
 END_C_DECLS
 

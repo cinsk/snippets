@@ -108,8 +108,8 @@ static struct stat writepid_stat;
 
 char *writepid_mkdir_template __attribute__((weak)) = WRITEPID_MKDIR_TEMPLATE;
 
-static void
-remove_pidfile(void)
+void
+writepid_unlink(void)
 {
   struct stat sbuf;
 
@@ -212,7 +212,7 @@ writepid(const char *pidfile, pid_t pid, int no_atexit)
       goto err;
     }
 
-    if (atexit(remove_pidfile) == -1) {
+    if (atexit(writepid_unlink) == -1) {
       saved_errno = errno;
       free((void *)writepid_pathname);
       writepid_pathname = 0;

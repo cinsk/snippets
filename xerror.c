@@ -330,65 +330,71 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 {
   void *trace[BACKTRACE_MAX];
   int ret;
+  int bt_fd;
 
   (void)uctx_void;
 
   if (!backtrace_mode)
     return;
 
-  {
-    if (xerror_stream == (FILE *)-1)
-      xerror_stream = stderr;
+  bt_fd = open(xerror_bt_filename, O_WRONLY | O_APPEND, 0644);
+  if (bt_fd == -1) {
+    bt_fd = xerror_fd;
+    WRITE_STR(bt_fd, "Can't open the backtrace file, ");
+    write(bt_fd, xerror_bt_filename, strlen(xerror_bt_filename));
+    WRITE_STR(bt_fd, "\n");
+  }
 
+  {
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     uint64_t pc = uctx->uc_mcontext->__ss.__rip;
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, ", RIP=[0x");
-    WRITE_NUM(xerror_fd, pc, 16);
-    WRITE_STR(xerror_fd, "]\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, ", RIP=[0x");
+    WRITE_NUM(bt_fd, pc, 16);
+    WRITE_STR(bt_fd, "]\n");
 
 # elif defined(REG_EIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, ", EIP=[0x");
-    WRITE_NUM(xerror_fd, pc, 16);
-    WRITE_STR(xerror_fd, "]\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, ", EIP=[0x");
+    WRITE_NUM(bt_fd, pc, 16);
+    WRITE_STR(bt_fd, "]\n");
 
 # elif defined(REG_RIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_RIP];
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, ", RIP=[0x");
-    WRITE_NUM(xerror_fd, pc, 16);
-    WRITE_STR(xerror_fd, "]\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, ", RIP=[0x");
+    WRITE_NUM(bt_fd, pc, 16);
+    WRITE_STR(bt_fd, "]\n");
 
 # endif
 #else
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, "\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, "\n");
 
 #endif  /* NO_MCONTEXT */
   }
@@ -402,14 +408,14 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
   /*
    * TODO: adhere XBACKTRACE_FILE environment variable.
    */
-  WRITE_STR(xerror_fd, "\nBacktrace:\n");
+  WRITE_STR(bt_fd, "\nBacktrace:\n");
   ret = backtrace(trace, BACKTRACE_MAX);
   /* TODO: error check on backtrace(3)? */
 
   // fflush(xerror_stream);
 
   if (!xerror_bt_filep)
-    backtrace_symbols_fd(trace, ret, xerror_fd);
+    backtrace_symbols_fd(trace, ret, bt_fd);
   else {
     int fd;
     fd = open(xerror_bt_filename, O_CREAT | O_WRONLY, 0600);
@@ -627,8 +633,8 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
   else
     asprintf(&xerror_bt_filename, "backtrace.%d", (int)getpid());
 
-  asprintf(&xerror_bt_command, "backtrace %d %s.%d", (int)getpid(),
-           xerror_bt_filename, (int)getpid());
+  asprintf(&xerror_bt_command, "backtrace %d %s", (int)getpid(),
+           xerror_bt_filename);
 
   return 0;
 }

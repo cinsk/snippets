@@ -8,6 +8,7 @@
 #include <limits.h>
 
 #include <stdint.h>
+
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -30,6 +31,10 @@
 #ifndef __GLIBC__
 /* In GLIBC, <string.h> will provide better basename(3). */
 #include <libgen.h>
+#endif
+
+#ifdef _PTHREAD
+#include <pthread.h>
 #endif
 
 #include "xerror.h"
@@ -82,16 +87,42 @@ xerror_redirect(FILE *fp)
 
   assert(fp != NULL);
 
+  fflush(fp);
+
+  /* There could be a debate, whether removing internal buffer of FILE
+   * stream is a good choice.  If the stream has buffer, then the
+   * delay causes by all xerror() related functions will be
+   * insignificant.  In the other hand, having internal buffer may
+   * cause some logs will be lost in critial error situations. */
+  setvbuf(fp, 0, _IONBF, 0);
+
   if (old == (FILE *)-1)
     old = NULL;
-  else
-    fflush(old);
 
-  fflush(fp);
-  setvbuf(fp, 0, _IONBF, 0);
+  /* Note for the maintainers:
+   *
+   * In a multi-threaded environment, you need to put extra care to
+   * the race condition of the accessing either of 'xerror_stream' or
+   * 'xerror_fd'.  During xerror_redirect(), other threads may call
+   * xerror() related functions, and they will access these
+   * variables.
+   *
+   * Currently, if there is a previous stream, I use
+   * flockfile()/funlockfil() so that no one can interfere assigning
+   * new value at 'xerror_stream'.  -- cinsk */
+
+  if (old) {
+    flockfile(old);
+    fflush(old);
+  }
 
   xerror_stream = fp;
   xerror_fd = fileno(fp);
+
+  if (old) {
+    __sync_synchronize();
+    funlockfile(old);
+  }
 
   return old;
 }
@@ -226,6 +257,9 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
 {
   char errbuf[BUFSIZ];
   int saved_errno = errno;
+#ifdef _PTHREAD
+  int cancel_state = PTHREAD_CANCEL_ENABLE;
+#endif
 
   if (xerror_stream == (FILE *)-1) {
     xerror_redirect(stderr);
@@ -245,6 +279,10 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
     if (pred)
       return;
   }
+
+#ifdef _PTHREAD
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancel_state);
+#endif
 
   fflush(stdout);
   fflush(xerror_stream);
@@ -276,6 +314,10 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
 
   funlockfile(xerror_stream);
   errno = saved_errno;
+
+#ifdef _PTHREAD
+  pthread_setcancelstate(cancel_state, NULL);
+#endif
 }
 
 
@@ -336,6 +378,8 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 
   if (!backtrace_mode)
     return;
+
+  __sync_synchronize();
 
   bt_fd = open(xerror_bt_filename, O_WRONLY | O_APPEND, 0644);
   if (bt_fd == -1) {

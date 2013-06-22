@@ -102,6 +102,9 @@ extern void xmessage(int progname, int code, int ignore,
  * Note that if you didn't set explicitly the output stream to STDERR,
  * this function will return NULL.  This may be helpful if you want to
  * close the previous output stream except STDERR.
+ *
+ * It is recommended that you call fopen() with "a" open mode for it's
+ * second argument.
  */
 extern FILE *xerror_redirect(FILE *fp);
 

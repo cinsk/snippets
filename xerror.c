@@ -45,6 +45,10 @@
 #include <limits.h>
 #endif
 
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
+
 #define BACKTRACE_MAX   16
 #define IGNORE_ENVNAME  "XERROR_IGNORES"
 #define IGNORE_FILENAME ".xerrignore"
@@ -56,6 +60,7 @@ const char *program_name __attribute__((weak)) = 0;
 
 int debug_mode __attribute__((weak));
 int backtrace_mode __attribute__((weak)) = 1;
+int printtid_mode __attribute__((weak)) = 0;
 
 static void set_program_name(void) __attribute__((constructor));
 
@@ -69,6 +74,7 @@ static char *xerror_bt_command = 0;
 static void bt_handler(int signo, siginfo_t *info, void *uctx_void);
 static void bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void);
 
+static int get_tid(void);
 
 static int ign_reserve(void);
 static int ign_load(const char *basedir);
@@ -225,7 +231,7 @@ xerror(int status, int code, const char *format, ...)
   va_list ap;
 
   va_start(ap, format);
-  xmessage(1, code, 0, format, ap);
+  xmessage(1, code, 0, 0, format, ap);
   va_end(ap);
 
   if (status)
@@ -249,13 +255,14 @@ xdebug_(int code, const char *format, ...)
     return;
 
   va_start(ap, format);
-  xmessage(0, code, 1, format, ap);
+  xmessage(0, code, 1, printtid_mode, format, ap);
   va_end(ap);
 }
 
 
 void
-xmessage(int progname, int code, int ignore, const char *format, va_list ap)
+xmessage(int progname, int code, int ignore, int show_tid,
+         const char *format, va_list ap)
 {
   char errbuf[BUFSIZ];
   int saved_errno = errno;
@@ -291,8 +298,16 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
 
   flockfile(xerror_stream);
 
-  if (progname && program_name)
-    fprintf(xerror_stream, "%s: ", program_name);
+  if (progname) {
+    if (program_name)
+      fprintf(xerror_stream, "%s: ", program_name);
+  }
+  else {
+    if (show_tid)
+      fprintf(xerror_stream, "%s(%d-%u):",
+              program_name ? program_name : "",
+              (int)getpid(), get_tid());
+  }
 
   vfprintf(xerror_stream, format, ap);
 
@@ -661,11 +676,29 @@ xerror_finalize(void)
   free(xerror_bt_command);
 }
 
+static int
+get_tid(void)
+{
+#ifdef _PTHREAD
+# if defined(__linux__)
+  return (int)syscall(gettid);
+# elif define(__APPLE__)
+  return (int)pthread_mach_thread_np(pthread_self());
+# else
+#  error Not supported system
+# endif
+#else
+  return 0;
+#endif  /* _PTHREAD */
+}
+
+
 int
 xerror_init(const char *prog_name, const char *ignore_search_dir)
 {
   char *file = getenv("XBACKTRACE_FILE");
   char *debug = getenv("XDEBUG");
+  char *thread = getenv("XDEBUG_THREAD");
 
   if (prog_name)
     program_name = prog_name;
@@ -675,6 +708,13 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
       debug_mode = 1;
     else
       debug_mode = 0;
+  }
+
+  if (thread) {
+    if (strcmp(thread, "0") != 0)
+      printtid_mode = 1;
+    else
+      printtid_mode = 0;
   }
 
   ign_load(ignore_search_dir);

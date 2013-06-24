@@ -304,9 +304,7 @@ xmessage(int progname, int code, int ignore, int show_tid,
   }
   else {
     if (show_tid)
-      fprintf(xerror_stream, "%s(%d-%u):",
-              program_name ? program_name : "",
-              (int)getpid(), get_tid());
+      fprintf(xerror_stream, "t-%u: ", (int)getpid(), get_tid());
   }
 
   vfprintf(xerror_stream, format, ap);

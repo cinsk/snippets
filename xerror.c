@@ -402,7 +402,6 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
     WRITE_STR(bt_fd, "Can't open the backtrace file, ");
     write(bt_fd, xerror_bt_filename, strlen(xerror_bt_filename));
     WRITE_STR(bt_fd, "\n");
-    fprintf(stderr, "errno; %d %s\n", errno, strerror(errno));
   }
 
   {

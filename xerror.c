@@ -161,7 +161,7 @@ xbacktrace_on_signals(int signo, ...)
 {
   struct sigaction act;
   va_list ap;
-  char *exe;
+  char *exe, *gdb;
 #ifdef USE_ALTSTACK
   stack_t ss;
 #endif
@@ -184,12 +184,14 @@ xbacktrace_on_signals(int signo, ...)
   memset(&act, 0, sizeof(act));
 
   exe = find_executable(xbacktrace_executable);
+  gdb = find_executable("gdb");
 
-  if (exe && getenv("XBACKTRACE_NOGDB") == 0)
+  if (exe && gdb && getenv("XBACKTRACE_NOGDB") == 0)
     act.sa_sigaction = bt_handler_gdb;
   else
     act.sa_sigaction = bt_handler;
 
+  free(gdb);
   free(exe);
 
   sigemptyset(&act.sa_mask);
@@ -662,9 +664,17 @@ int
 xerror_init(const char *prog_name, const char *ignore_search_dir)
 {
   char *file = getenv("XBACKTRACE_FILE");
+  char *debug = getenv("XDEBUG");
 
   if (prog_name)
     program_name = prog_name;
+
+  if (debug) {
+    if (strcmp(debug, "0") != 0)
+      debug_mode = 1;
+    else
+      debug_mode = 0;
+  }
 
   ign_load(ignore_search_dir);
 
@@ -732,11 +742,16 @@ int debug_mode = 1;
 static void bar(int a)
 {
   unsigned char *p = 0;
+  int i, j;
+  i = 4;
+  j = 0xdeadbeef;
   *p = 3;                       /* SIGSEGV */
 }
 
 void foo(int a, int b)
 {
+  FILE *fp;
+
   bar(a);
 }
 

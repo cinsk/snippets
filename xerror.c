@@ -383,12 +383,13 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 
   __sync_synchronize();
 
-  bt_fd = open(xerror_bt_filename, O_WRONLY | O_APPEND, 0644);
+  bt_fd = open(xerror_bt_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
   if (bt_fd == -1) {
     bt_fd = xerror_fd;
     WRITE_STR(bt_fd, "Can't open the backtrace file, ");
     write(bt_fd, xerror_bt_filename, strlen(xerror_bt_filename));
     WRITE_STR(bt_fd, "\n");
+    fprintf(stderr, "errno; %d %s\n", errno, strerror(errno));
   }
 
   {

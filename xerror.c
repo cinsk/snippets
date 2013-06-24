@@ -304,7 +304,7 @@ xmessage(int progname, int code, int ignore, int show_tid,
   }
   else {
     if (show_tid)
-      fprintf(xerror_stream, "t-%u: ", (int)getpid(), get_tid());
+      fprintf(xerror_stream, "t-%u: ", get_tid());
   }
 
   vfprintf(xerror_stream, format, ap);
@@ -679,8 +679,8 @@ get_tid(void)
 {
 #ifdef _PTHREAD
 # if defined(__linux__)
-  return (int)syscall(gettid);
-# elif define(__APPLE__)
+  return (int)syscall(SYS_gettid);
+# elif defined(__APPLE__)
   return (int)pthread_mach_thread_np(pthread_self());
 # else
 #  error Not supported system

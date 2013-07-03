@@ -551,22 +551,22 @@ bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
   char *file = getenv("XBACKTRACE_FILE");
 
   if (file)
-    snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d %s.%d",
-             (int)getpid(), file, (int)getpid());
+    snprintf(cmdbuf, LINE_MAX - 1, "backtrace -w -o %s.%d %d",
+             file, (int)getpid(), (int)getpid());
   else {
     if (getcwd(cwd, PATH_MAX) == 0)
       cwd[0] = '\0';
 
     if (getppid() == 1 || strcmp(cwd, "/") == 0) {
       if (access("/var/log", W_OK) == 0)
-        snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d /var/log/gdb.%d",
+        snprintf(cmdbuf, LINE_MAX - 1, "backtrace -w -o /var/log/gdb.%d %d",
                  (int)getpid(), (int)getpid());
       else
-        snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d /tmp/gdb.%d",
+        snprintf(cmdbuf, LINE_MAX - 1, "backtrace -w -o /tmp/gdb.%d %d",
                  (int)getpid(), (int)getpid());
     }
     else
-      snprintf(cmdbuf, LINE_MAX - 1, "backtrace %d", (int)getpid());
+      snprintf(cmdbuf, LINE_MAX - 1, "backtrace -w %d", (int)getpid());
   }
   system(cmdbuf);
 #endif  /* 0 */
@@ -858,6 +858,7 @@ main(int argc, char *argv[])
 
   xbacktrace_on_signals(SIGSEGV, SIGILL, SIGFPE, SIGBUS, 0);
 
+  xerror(0, 0, "pid = %d\n", (int)getpid());
   xdebug(0, "program_name = %s", program_name);
   xdebug(0, "this is debug message %d", 1);
 

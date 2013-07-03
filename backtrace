@@ -9,6 +9,85 @@ exec 1>&2
 TIMEOUT=5
 #DEBUG=1
 
+WATCHDOG=0
+VERSION=0.2
+
+function help_and_exit () {
+    cat <<EOF
+Generate backtrace from the process
+Usage: `basename $0` [OPTION...] PID [BACKTRACE-FILE]
+
+  -o F   set the output file to F  (default: stdout)
+
+  -w     enable watchdog (to kill the either GDB or the target process)
+  -t N   set watchdog expiration to N second(s). (default: $TIMEOUT)
+
+  -h     show this help and exit
+  -v     display version information and exit
+   
+If BACKTRACE-FILE is not specified, the default filename will be
+"gdb.PID" where 'PID' is the PID of the process.
+
+If watchdog is on (-w), this script wait for a certain amount of
+time, then ensure the GDB to terminate.  i.e.  the script will
+send SIGTERM or SIGKILL to the target process.
+
+Normaly, you don't need to use the watchdog (-w).  However, in some
+cases, GDB does not exit but keep existing with the target process.
+Using the watchdog helps by sending signal to the target process so
+that GDB can terminate.
+
+EOF
+    exit 0
+}
+
+function version_and_exit() {
+    cat <<EOF
+`basename $0` version $VERSION
+EOF
+    exit 0
+}
+
+function debug() {
+    [ -n "$DEBUG" ] && echo "$@"
+    return 0
+}
+
+BTFILE=-
+
+while getopts whvt:Do: opt; do
+    case $opt in
+        w)
+            WATCHDOG=1
+            ;;
+        o)
+            BTFILE=$OPTARG
+            ;;
+        t)
+            WATCHDOG=1
+            TIMEOUT=$OPTARG
+            ;;
+        k)
+            KILLPROC=$((KILLPROC + 1))
+            ;;
+        D)
+            DEBUG=1
+            ;;
+        h)
+            help_and_exit
+            ;;
+        v)
+            version_and_exit
+            ;;
+        ?)
+            echo "usage: $0 PID [BACKTRACE-FILE]" 1>&2
+            exit 1
+            ;;
+    esac
+done
+
+shift $(($OPTIND - 1))
+
 if test $# -ne 2 -a $# -ne 1; then
     echo "usage: $0 PID [BACKTRACE-FILE]" 1>&2
     exit 1
@@ -17,32 +96,61 @@ fi
 PID=$1
 TMPFILE=/tmp/gdb.$$
 
+if ! kill -0 "$PID" >&/dev/null; then
+    echo "backtrace: process (PID=$PID) does not exist"
+    exit 1
+fi
+
+debug "watchdog: $WATCHDOG"
+debug "timeout:  $TIMEOUT"
+
 if which dirname >&/dev/null; then
-    mkdir -p `dirname $TMPFILE`
+    mkdir -p `dirname $TMPFILE` 1>&2
 fi
 
 trap "rm -f $TMPFILE; exit 1" SIGINT SIGHUP
+
+case "$KILLPROC" in
+    0)
+        KILLCMD=""
+        ;;
+    1)
+        KILLCMD="signal SIGTERM"
+        ;;
+    *)
+        KILLCMD="signal SIGKILL"
+        ;;
+esac
+
 cat << EOF > "$TMPFILE"
 handle all nostop print pass
 set height 0
 bt full
 thread apply all bt full
+#$KILLCMD
 quit
 EOF
 
-if test -z "$2"; then
-    BTFILE=gdb.$PID
-else
+if test -n "$2"; then
     BTFILE=$2
 fi
 
 if which dirname >&/dev/null; then
-    mkdir -p `dirname $BTFILE`
+    [ "$BTFILE" != "-" ] && mkdir -p `dirname $BTFILE` 1>&2
 fi
 
-BTTMP=${BTFILE}.tmp
+if [ "$BTFILE" != "-" ]; then
+    BTTMP=${BTFILE}.tmp
+    WATMP=${BTFILE}.watch
+    CATMP=${BTFILE}.cat
+else
+    BTTMP=/tmp/.gdb.$$.tmp
+    WATMP=/tmp/.gdb.$$.watch
+    CATMP=/tmp/.gdb.$$.cat
+fi
 
-trap "rm -f $TMPFILE $BTTMP; exit 1" SIGINT SIGHUP   
+trap "rm -f \"$TMPFILE\" \"$BTTMP\" \"$WATMP\" \"$CATMP\"; exit 1" \
+    SIGINT SIGHUP   
 
 #
 # I don't know why, but there are some cases that GDB and the target
@@ -57,39 +165,72 @@ trap "rm -f $TMPFILE $BTTMP; exit 1" SIGINT SIGHUP
 # to the GDB process respectively.
 #
 
-coproc gdb -batch -x $TMPFILE --pid $PID < /dev/null 2>&1 > ${BTTMP}
+if [ "$WATCHDOG" -ne 0 ]; then
+    debug "run COPROC gdb ..."
+    coproc gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP
+    #set | grep COPROC
+else
+    gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP
+fi
+
 #gdb --batch -x $TMPFILE --pid $PID 2>&1 #| tee $BTFILE
 
 tm_start=`date +%s`
-while true; do
+while [ "$WATCHDOG" -ne 0 ]; do
     sleep 0.1
 
-    [ -z "$COPROC_PID" ] && break
+    debug "COPROC_PID: $COPROC_PID"
+
+    [ -z "$COPROC_PID" ] && debug "GDB seems to be gone" && break
+
     tm_ellapsed=$((`date +%s` - tm_start))
-    [ -n "$DEBUG" ] && echo "ellapsed: $tm_ellapsed"
+    debug "ellapsed: $tm_ellapsed"
 
     if [ "$tm_ellapsed" -ge "$TIMEOUT" ]; then
-        [ -n "$DEBUG" ] && echo "timeout reached: force quit the program"
+        echo "----" > $WATMP
+        echo "backtrace: timeout reached; $tm_ellapsed second(s)" >> $WATMP
+        debug "timeout reached: force quit the program"
 
-        kill -0 "$PID" >&/dev/null && kill -TERM "$PID"
+        kill -0 "$PID" >&/dev/null && kill -TERM "$PID" && \
+            echo "backtrace: sending SIGTERM to the process $PID" >> $WATMP
+
         sleep 0.1
 
         if kill -0 "$PID" >&/dev/null; then
-            [ -n "$DEBUG" ] && echo "COPROC_PID: $COPROC_PID"
+            debug "GDB pid: $COPROC_PID"
 
-            [ -n "$COPROC_PID" ] && kill -KILL "$PID"
+            [ -n "$COPROC_PID" ] && kill -KILL "$PID" && \
+                echo "backtrace: sending SIGKILL to the process $PID" >> $WATMP
+
             [ -n "$COPROC_PID" ] && sleep 0.2
         fi
 
         if [ -n "$COPROC_PID" ]; then
-            [ -n "$COPROC_PID" ] && kill -TERM "$COPROC_PID"
+            [ -n "$COPROC_PID" ] && kill -TERM "$COPROC_PID" && \
+                echo "backtrace: sending SIGTERM to the GDB" >> $WATMP
             [ -n "$COPROC_PID" ] && sleep 0.2
-            [ -n "$COPROC_PID" ] && kill -9 "$COPROC_PID"
+            [ -n "$COPROC_PID" ] && kill -9 "$COPROC_PID" && \
+                echo "backtrace: sending SIGKILL to the GDB" >> $WATMP
         fi
         break;
     fi
 done
 
-mv ${BTTMP} ${BTFILE}
-/bin/rm -f $TMPFILE $BTTMP
+# $BTTMP contains the output of GDB.
+# $WATMP may contains the output of the watchdoc scripts above
+# $CATMP contains the concatenated output of $BTTMP and $WATMP
+if [ -f "$WATMP" ]; then
+    cat "$BTTMP" "$WATMP" > "$CATMP"
+else
+    mv "$BTTMP" "$CATMP"
+fi
+
+if [ "$BTFILE" != "-" ]; then
+    mv "$CATMP" "$BTFILE"
+else
+    cat $CATMP
+fi
+
+/bin/rm -f "$TMPFILE" "$BTTMP" "$WATMP" "$CATMP"
+
 exit 0

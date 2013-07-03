@@ -129,8 +129,11 @@ xerror_redirect(FILE *fp)
   setvbuf(fp, 0, _IONBF, 0);
 
   sigfillset(&set);
-
+#ifdef _PTHREAD
   pthread_sigmask(SIG_BLOCK, &set, &oldset);
+#else
+  sigprocmask(SIG_BLOCK, &set, &oldset);
+#endif
 
   /* Note for the maintainers:
    *
@@ -146,12 +149,17 @@ xerror_redirect(FILE *fp)
 
   xerror_stream = fp;
   xerror_fd = fileno(fp);
+
+#ifdef _PTHREAD
   pthread_sigmask(SIG_SETMASK, &oldset, 0);
+#else
+  sigprocmask(SIG_SETMASK, &oldset, 0);
+#endif
 
   UNLOCK();
 
   if (old) {
-    __sync_synchronize();
+    __sync_synchronize();       /* is this necessary? */
     funlockfile(old);
   }
 

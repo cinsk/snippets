@@ -8,6 +8,7 @@
 #include <limits.h>
 
 #include <stdint.h>
+
 #include <sys/time.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -32,12 +33,20 @@
 #include <libgen.h>
 #endif
 
+#ifdef _PTHREAD
+#include <pthread.h>
+#endif
+
 #include "xerror.h"
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #include <libgen.h>
 #include <limits.h>
+#endif
+
+#ifdef __linux__
+#include <sys/syscall.h>
 #endif
 
 #define BACKTRACE_MAX   16
@@ -51,6 +60,7 @@ const char *program_name __attribute__((weak)) = 0;
 
 int debug_mode __attribute__((weak));
 int backtrace_mode __attribute__((weak)) = 1;
+int printtid_mode __attribute__((weak)) = 0;
 
 static void set_program_name(void) __attribute__((constructor));
 
@@ -64,6 +74,7 @@ static char *xerror_bt_command = 0;
 static void bt_handler(int signo, siginfo_t *info, void *uctx_void);
 static void bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void);
 
+static int get_tid(void);
 
 static int ign_reserve(void);
 static int ign_load(const char *basedir);
@@ -82,16 +93,42 @@ xerror_redirect(FILE *fp)
 
   assert(fp != NULL);
 
+  fflush(fp);
+
+  /* There could be a debate, whether removing internal buffer of FILE
+   * stream is a good choice.  If the stream has buffer, then the
+   * delay causes by all xerror() related functions will be
+   * insignificant.  In the other hand, having internal buffer may
+   * cause some logs will be lost in critial error situations. */
+  setvbuf(fp, 0, _IONBF, 0);
+
   if (old == (FILE *)-1)
     old = NULL;
-  else
-    fflush(old);
 
-  fflush(fp);
-  setvbuf(fp, 0, _IONBF, 0);
+  /* Note for the maintainers:
+   *
+   * In a multi-threaded environment, you need to put extra care to
+   * the race condition of the accessing either of 'xerror_stream' or
+   * 'xerror_fd'.  During xerror_redirect(), other threads may call
+   * xerror() related functions, and they will access these
+   * variables.
+   *
+   * Currently, if there is a previous stream, I use
+   * flockfile()/funlockfil() so that no one can interfere assigning
+   * new value at 'xerror_stream'.  -- cinsk */
+
+  if (old) {
+    flockfile(old);
+    fflush(old);
+  }
 
   xerror_stream = fp;
   xerror_fd = fileno(fp);
+
+  if (old) {
+    __sync_synchronize();
+    funlockfile(old);
+  }
 
   return old;
 }
@@ -130,7 +167,7 @@ xbacktrace_on_signals(int signo, ...)
 {
   struct sigaction act;
   va_list ap;
-  char *exe;
+  char *exe, *gdb;
 #ifdef USE_ALTSTACK
   stack_t ss;
 #endif
@@ -153,12 +190,14 @@ xbacktrace_on_signals(int signo, ...)
   memset(&act, 0, sizeof(act));
 
   exe = find_executable(xbacktrace_executable);
+  gdb = find_executable("gdb");
 
-  if (exe && getenv("XBACKTRACE_NOGDB") == 0)
+  if (exe && gdb && getenv("XBACKTRACE_NOGDB") == 0)
     act.sa_sigaction = bt_handler_gdb;
   else
     act.sa_sigaction = bt_handler;
 
+  free(gdb);
   free(exe);
 
   sigemptyset(&act.sa_mask);
@@ -192,7 +231,7 @@ xerror(int status, int code, const char *format, ...)
   va_list ap;
 
   va_start(ap, format);
-  xmessage(1, code, 0, format, ap);
+  xmessage(1, code, 0, 0, format, ap);
   va_end(ap);
 
   if (status)
@@ -216,16 +255,20 @@ xdebug_(int code, const char *format, ...)
     return;
 
   va_start(ap, format);
-  xmessage(0, code, 1, format, ap);
+  xmessage(0, code, 1, printtid_mode, format, ap);
   va_end(ap);
 }
 
 
 void
-xmessage(int progname, int code, int ignore, const char *format, va_list ap)
+xmessage(int progname, int code, int ignore, int show_tid,
+         const char *format, va_list ap)
 {
   char errbuf[BUFSIZ];
   int saved_errno = errno;
+#ifdef _PTHREAD
+  int cancel_state = PTHREAD_CANCEL_ENABLE;
+#endif
 
   if (xerror_stream == (FILE *)-1) {
     xerror_redirect(stderr);
@@ -246,13 +289,23 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
       return;
   }
 
+#ifdef _PTHREAD
+  pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancel_state);
+#endif
+
   fflush(stdout);
   fflush(xerror_stream);
 
   flockfile(xerror_stream);
 
-  if (progname && program_name)
-    fprintf(xerror_stream, "%s: ", program_name);
+  if (progname) {
+    if (program_name)
+      fprintf(xerror_stream, "%s: ", program_name);
+  }
+  else {
+    if (show_tid)
+      fprintf(xerror_stream, "t-%u: ", get_tid());
+  }
 
   vfprintf(xerror_stream, format, ap);
 
@@ -276,6 +329,10 @@ xmessage(int progname, int code, int ignore, const char *format, va_list ap)
 
   funlockfile(xerror_stream);
   errno = saved_errno;
+
+#ifdef _PTHREAD
+  pthread_setcancelstate(cancel_state, NULL);
+#endif
 }
 
 
@@ -330,65 +387,73 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
 {
   void *trace[BACKTRACE_MAX];
   int ret;
+  int bt_fd;
 
   (void)uctx_void;
 
   if (!backtrace_mode)
     return;
 
-  {
-    if (xerror_stream == (FILE *)-1)
-      xerror_stream = stderr;
+  __sync_synchronize();
 
+  bt_fd = open(xerror_bt_filename, O_WRONLY | O_APPEND | O_CREAT, 0644);
+  if (bt_fd == -1) {
+    bt_fd = xerror_fd;
+    WRITE_STR(bt_fd, "Can't open the backtrace file, ");
+    write(bt_fd, xerror_bt_filename, strlen(xerror_bt_filename));
+    WRITE_STR(bt_fd, "\n");
+  }
+
+  {
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     uint64_t pc = uctx->uc_mcontext->__ss.__rip;
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, ", RIP=[0x");
-    WRITE_NUM(xerror_fd, pc, 16);
-    WRITE_STR(xerror_fd, "]\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, ", RIP=[0x");
+    WRITE_NUM(bt_fd, pc, 16);
+    WRITE_STR(bt_fd, "]\n");
 
 # elif defined(REG_EIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_EIP];
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, ", EIP=[0x");
-    WRITE_NUM(xerror_fd, pc, 16);
-    WRITE_STR(xerror_fd, "]\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, ", EIP=[0x");
+    WRITE_NUM(bt_fd, pc, 16);
+    WRITE_STR(bt_fd, "]\n");
 
 # elif defined(REG_RIP) /* linux */
     ucontext_t *uctx = (ucontext_t *)uctx_void;
     greg_t pc = uctx->uc_mcontext.gregs[REG_RIP];
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, ", RIP=[0x");
-    WRITE_NUM(xerror_fd, pc, 16);
-    WRITE_STR(xerror_fd, "]\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, ", RIP=[0x");
+    WRITE_NUM(bt_fd, pc, 16);
+    WRITE_STR(bt_fd, "]\n");
 
 # endif
 #else
 
-    WRITE_STR(xerror_fd, "Got signal (");
-    WRITE_NUM(xerror_fd, signo, 10);
+    WRITE_STR(bt_fd, "Got signal (");
+    WRITE_NUM(bt_fd, signo, 10);
 
-    WRITE_STR(xerror_fd, ") at address 0x");
-    WRITE_NUM(xerror_fd, (unsigned long)info->si_addr, 16);
-    WRITE_STR(xerror_fd, "\n");
+    WRITE_STR(bt_fd, ") at address 0x");
+    WRITE_NUM(bt_fd, (unsigned long)info->si_addr, 16);
+    WRITE_STR(bt_fd, "\n");
 
 #endif  /* NO_MCONTEXT */
   }
@@ -402,14 +467,14 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
   /*
    * TODO: adhere XBACKTRACE_FILE environment variable.
    */
-  WRITE_STR(xerror_fd, "\nBacktrace:\n");
+  WRITE_STR(bt_fd, "\nBacktrace:\n");
   ret = backtrace(trace, BACKTRACE_MAX);
   /* TODO: error check on backtrace(3)? */
 
   // fflush(xerror_stream);
 
   if (!xerror_bt_filep)
-    backtrace_symbols_fd(trace, ret, xerror_fd);
+    backtrace_symbols_fd(trace, ret, bt_fd);
   else {
     int fd;
     fd = open(xerror_bt_filename, O_CREAT | O_WRONLY, 0600);
@@ -608,13 +673,46 @@ xerror_finalize(void)
   free(xerror_bt_command);
 }
 
+static int
+get_tid(void)
+{
+#ifdef _PTHREAD
+# if defined(__linux__)
+  return (int)syscall(SYS_gettid);
+# elif defined(__APPLE__)
+  return (int)pthread_mach_thread_np(pthread_self());
+# else
+#  error Not supported system
+# endif
+#else
+  return 0;
+#endif  /* _PTHREAD */
+}
+
+
 int
 xerror_init(const char *prog_name, const char *ignore_search_dir)
 {
   char *file = getenv("XBACKTRACE_FILE");
+  char *debug = getenv("XDEBUG");
+  char *thread = getenv("XDEBUG_THREAD");
 
   if (prog_name)
     program_name = prog_name;
+
+  if (debug) {
+    if (strcmp(debug, "0") != 0)
+      debug_mode = 1;
+    else
+      debug_mode = 0;
+  }
+
+  if (thread) {
+    if (strcmp(thread, "0") != 0)
+      printtid_mode = 1;
+    else
+      printtid_mode = 0;
+  }
 
   ign_load(ignore_search_dir);
 
@@ -627,8 +725,8 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
   else
     asprintf(&xerror_bt_filename, "backtrace.%d", (int)getpid());
 
-  asprintf(&xerror_bt_command, "backtrace %d %s.%d", (int)getpid(),
-           xerror_bt_filename, (int)getpid());
+  asprintf(&xerror_bt_command, "backtrace %d %s", (int)getpid(),
+           xerror_bt_filename);
 
   return 0;
 }
@@ -654,7 +752,11 @@ find_executable(const char *exe)
       break;
 
     asprintf(&fpath, "%s/%s", tok, exe);
+#ifdef __USE_GNU
     fullpath = canonicalize_file_name(fpath);
+#else
+    fullpath = realpath(fpath, 0);
+#endif
     free(fpath);
 
     if (fullpath && access(fullpath, X_OK) == 0) {
@@ -678,11 +780,16 @@ int debug_mode = 1;
 static void bar(int a)
 {
   unsigned char *p = 0;
+  int i, j;
+  i = 4;
+  j = 0xdeadbeef;
   *p = 3;                       /* SIGSEGV */
 }
 
 void foo(int a, int b)
 {
+  FILE *fp;
+
   bar(a);
 }
 

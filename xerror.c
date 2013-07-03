@@ -15,6 +15,10 @@
 #include <fcntl.h>
 #include <fnmatch.h>
 
+#ifdef _PTHREAD
+#include <pthread.h>
+#endif
+
 #ifndef NO_MCONTEXT
 # ifdef __APPLE__
 /* MacOSX deprecates <ucontext.h> */
@@ -67,6 +71,14 @@ static void set_program_name(void) __attribute__((constructor));
 static FILE *xerror_stream = (FILE *)-1;
 static int xerror_fd = -1;
 
+#ifdef _PTHREAD
+pthread_mutex_t xerror_mutex = PTHREAD_MUTEX_INITIALIZER;
+#define LOCK()          pthread_mutex_lock(&xerror_mutex)
+#define UNLOCK()        pthread_mutex_unlock(&xerror_mutex)
+#else
+#define LOCK()          ((void)0)
+#define UNLOCK()        ((void)0)
+#endif  /* _PTHREAD */
 
 static int xerror_bt_filep = 0;
 static char *xerror_bt_filename = 0;
@@ -90,8 +102,22 @@ FILE *
 xerror_redirect(FILE *fp)
 {
   FILE *old = xerror_stream;
+  sigset_t set, oldset;
 
   assert(fp != NULL);
+
+  LOCK();
+  {
+    if (old == (FILE *)-1)
+      old = NULL;
+    else
+      fflush(old);
+
+    if (xerror_stream == fp) {
+      UNLOCK();
+      return 0;
+    }
+  }
 
   fflush(fp);
 
@@ -102,8 +128,9 @@ xerror_redirect(FILE *fp)
    * cause some logs will be lost in critial error situations. */
   setvbuf(fp, 0, _IONBF, 0);
 
-  if (old == (FILE *)-1)
-    old = NULL;
+  sigfillset(&set);
+
+  pthread_sigmask(SIG_BLOCK, &set, &oldset);
 
   /* Note for the maintainers:
    *
@@ -117,13 +144,11 @@ xerror_redirect(FILE *fp)
    * flockfile()/funlockfil() so that no one can interfere assigning
    * new value at 'xerror_stream'.  -- cinsk */
 
-  if (old) {
-    flockfile(old);
-    fflush(old);
-  }
-
   xerror_stream = fp;
   xerror_fd = fileno(fp);
+  pthread_sigmask(SIG_SETMASK, &oldset, 0);
+
+  UNLOCK();
 
   if (old) {
     __sync_synchronize();
@@ -270,13 +295,6 @@ xmessage(int progname, int code, int ignore, int show_tid,
   int cancel_state = PTHREAD_CANCEL_ENABLE;
 #endif
 
-  if (xerror_stream == (FILE *)-1) {
-    xerror_redirect(stderr);
-  }
-
-  if (!xerror_stream)
-    return;
-
   if (ignore) {
     va_list vcp;
     int pred;
@@ -289,9 +307,21 @@ xmessage(int progname, int code, int ignore, int show_tid,
       return;
   }
 
+  LOCK();
+
 #ifdef _PTHREAD
   pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cancel_state);
 #endif
+
+  if (xerror_stream == (FILE *)-1) {
+    if (stderr != NULL)
+      xerror_redirect(stderr);
+    else
+      goto fin;
+  }
+
+  if (!xerror_stream)
+    return;
 
   fflush(stdout);
   fflush(xerror_stream);
@@ -330,9 +360,12 @@ xmessage(int progname, int code, int ignore, int show_tid,
   funlockfile(xerror_stream);
   errno = saved_errno;
 
+ fin:
 #ifdef _PTHREAD
   pthread_setcancelstate(cancel_state, NULL);
 #endif
+
+  UNLOCK();
 }
 
 
@@ -715,6 +748,15 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
   }
 
   ign_load(ignore_search_dir);
+
+#ifdef _PTHREAD
+  {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&xerror_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+  }
+#endif  /* _PTHREAD */
 
   xerror_redirect(stderr);
 

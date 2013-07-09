@@ -16,10 +16,14 @@ SIGWAIT=2
 PROGNAME=`basename $0`
 VERSION_STRING=0.1
 
+FILTER=""
+
 function usage_and_exit() {
     cat <<EOF
 Kill processes that have enough CLOSE_WAIT socket(s)
 Usage: $PROGNAME [OPTION...]
+
+    -f PAT   Kill only processes whose command matches PAT
 
     -l N     If a process has more than or equal to N CLOSE_WAIT socket(s),
              it will be killed with a signal (default: $MAX_COUNT)
@@ -46,8 +50,11 @@ function version_and_exit() {
     exit 0
 }
 
-while getopts hvs:i:l:w: opt; do
+while getopts hvf:s:i:l:w: opt; do
     case $opt in
+        f)
+            FILTER="$OPTARG"
+            ;;
         l)
             MAX_COUNT=$OPTARG
             ;;
@@ -106,6 +113,23 @@ function log_noprog() {
     return 0
 }
 
+function check_rights() {
+    pid=$1
+    euid=$(id -u)
+    if test "$euid" -ne 0 -a "$euid" -ne "$(ps -p $pid -o euid=)"; then
+        log "didn't have enough access rights to kill process $pid"
+        return 1;
+    fi
+
+    echo "FILTER: |$FILTER|"
+    echo "$(ps -p $pid -o command=)" | grep "$FILTER" >/dev/null
+    ret=$?
+    if test "$ret" -ne 0; then
+        log "process $pid does not match to the filter, skipped"
+    fi
+    return $ret
+}
+
 function xkill() {
     pid=$1
     (echo kill -$SIGNAL "$pid";
@@ -128,9 +152,11 @@ while true; do
                 PCOUNT=1
                 log_noprog "# `date -u -Iseconds`"
             fi
-            #(echo -e \tkill -$SIGNAL "$pid"; sleep "$SIGWAIT"; kill -0 "$pid" && echo -e \tkill -9 "$pid")&
-            xkill "$pid"
-            log "process $pid has more than $count CLOSE_WAIT socket(s), killed"
+
+            if check_rights "$pid"; then
+                xkill "$pid"
+                log "process $pid has more than $count CLOSE_WAIT socket(s), killed"
+            fi
         fi;
     done
     sleep $INTERVAL

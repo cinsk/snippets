@@ -18,6 +18,7 @@ VERSION_STRING=0.1
 
 FILTER=""
 
+
 function usage_and_exit() {
     cat <<EOF
 Kill processes that have enough CLOSE_WAIT socket(s)
@@ -51,10 +52,64 @@ EOF
     exit 0
 }
 
+
 function version_and_exit() {
     echo "$PROGNAME version $VERSION_STRING"
     exit 0
 }
+
+
+function log() {
+    # Usage: log MESSAGE
+    echo "$PROGNAME: $@" >> $LOG_FILE
+    echo "$PROGNAME: $@" 1>&2
+    return 0
+}
+
+
+function log_noprog() {
+    # Usage: log_noprog MESSAGE
+    echo "$@" >> $LOG_FILE
+    echo "$@" 1>&2
+    return 0
+}
+
+
+function debug() {
+    # Usage: debug MESSAGE
+    [ -n "$DEBUG_MODE" ] && echo "$PROGNAME: $@" 1>&2
+    return 0
+}
+
+
+function check_rights() {
+    # Usage: check_rights PID
+    pid=$1
+    euid=$(id -u)
+    if test "$euid" -ne 0 -a "$euid" -ne "$(ps -p $pid -o euid=)"; then
+        log "didn't have enough access rights to kill process $pid"
+        return 1;
+    fi
+
+    echo "$(ps -p $pid -o command=)" | grep "$FILTER" >/dev/null
+    ret=$?
+    if test "$ret" -ne 0; then
+        log "process $pid does not match to the filter, skipped"
+    fi
+    return $ret
+}
+
+
+function xkill() {
+    pid=$1
+    (kill -$SIGNAL "$pid";
+        sleep "$SIGWAIT";
+        kill -0 "$pid" >&/dev/null && \
+            log "process $pid didn't exit, force killing" && \
+            kill -9 "$pid";)&
+    return 0
+}
+
 
 while getopts hvdf:Ds:i:l:w: opt; do
     case $opt in
@@ -93,26 +148,11 @@ while getopts hvdf:Ds:i:l:w: opt; do
 done
 shift $(($OPTIND - 1))
 
-function log() {
-    echo "$PROGNAME: $@" >> $LOG_FILE
-    echo "$PROGNAME: $@" 1>&2
-    return 0
-}
-
-function log_noprog() {
-    echo "$@" >> $LOG_FILE
-    echo "$@" 1>&2
-    return 0
-}
-
-function debug() {
-    [ -n "$DEBUG_MODE" ] && echo "$PROGNAME: $@" 1>&2
-    return 0
-}
 
 debug "limits: $MAX_COUNT"
 debug "interval: $INTERVAL"
 debug "signal: $SIGNAL"
+debug "filter: |$FILTER|"
 
 trap "rm -f \"$SCRIPT\"; exit 1;" SIGINT SIGTERM SIGHUP SIGQUIT
 
@@ -163,37 +203,12 @@ cat > $SCRIPT <<EOF
 
 END {
     for (k in sum) { 
+        # output "PID COUNT" where COUNT is the # of CLOSE_WAIT socket(s)
         print k, sum[k]
     }
 }
 EOF
 
-function check_rights() {
-    pid=$1
-    euid=$(id -u)
-    if test "$euid" -ne 0 -a "$euid" -ne "$(ps -p $pid -o euid=)"; then
-        log "didn't have enough access rights to kill process $pid"
-        return 1;
-    fi
-
-    debug "FILTER: |$FILTER|"
-    echo "$(ps -p $pid -o command=)" | grep "$FILTER" >/dev/null
-    ret=$?
-    if test "$ret" -ne 0; then
-        log "process $pid does not match to the filter, skipped"
-    fi
-    return $ret
-}
-
-function xkill() {
-    pid=$1
-    (kill -$SIGNAL "$pid";
-        sleep "$SIGWAIT";
-        kill -0 "$pid" >&/dev/null && \
-            log "process $pid didn't exit, force killing" && \
-            kill -9 "$pid";)&
-    return 0
-}
 
 #declare -a CWCOUNT
 
@@ -205,6 +220,7 @@ while true; do
 
         while read line; do
         pid=`echo "$line" | awk '{ print $1 }'`;
+        # 'count' holds the count for CLOSE_WAIT socket(s)
         count=`echo "$line" | awk '{ print $2}'`;
 
         debug "process[$pid] = $count"

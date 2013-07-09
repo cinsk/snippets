@@ -93,6 +93,23 @@ while getopts hvdf:Ds:i:l:w: opt; do
 done
 shift $(($OPTIND - 1))
 
+function log() {
+    echo "$PROGNAME: $@" >> $LOG_FILE
+    echo "$PROGNAME: $@" 1>&2
+    return 0
+}
+
+function log_noprog() {
+    echo "$@" >> $LOG_FILE
+    echo "$@" 1>&2
+    return 0
+}
+
+function debug() {
+    [ -n "$DEBUG_MODE" ] && echo "$PROGNAME: $@" 1>&2
+    return 0
+}
+
 debug "limits: $MAX_COUNT"
 debug "interval: $INTERVAL"
 debug "signal: $SIGNAL"
@@ -150,23 +167,6 @@ END {
     }
 }
 EOF
-
-function log() {
-    echo "$PROGNAME: $@" >> $LOG_FILE
-    echo "$PROGNAME: $@" 1>&2
-    return 0
-}
-
-function log_noprog() {
-    echo "$@" >> $LOG_FILE
-    echo "$@" 1>&2
-    return 0
-}
-
-function debug() {
-    [ -n "$DEBUG_MODE" ] && echo "$PROGNAME: $@" 1>&2
-    return 0
-}
 
 function check_rights() {
     pid=$1

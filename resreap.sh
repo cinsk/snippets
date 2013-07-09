@@ -93,9 +93,9 @@ while getopts hvdf:Ds:i:l:w: opt; do
 done
 shift $(($OPTIND - 1))
 
-echo "limits: $MAX_COUNT"
-echo "interval: $INTERVAL"
-echo "signal: $SIGNAL"
+debug "limits: $MAX_COUNT"
+debug "interval: $INTERVAL"
+debug "signal: $SIGNAL"
 
 trap "rm -f \"$SCRIPT\"; exit 1;" SIGINT SIGTERM SIGHUP SIGQUIT
 
@@ -176,7 +176,7 @@ function check_rights() {
         return 1;
     fi
 
-    echo "FILTER: |$FILTER|"
+    debug "FILTER: |$FILTER|"
     echo "$(ps -p $pid -o command=)" | grep "$FILTER" >/dev/null
     ret=$?
     if test "$ret" -ne 0; then

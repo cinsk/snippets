@@ -25,21 +25,27 @@ Usage: $PROGNAME [OPTION...]
 
     -f PAT   Kill only processes whose command matches PAT
 
-    -l N     If a process has more than or equal to N CLOSE_WAIT socket(s),
-             it will be killed with a signal (default: $MAX_COUNT)
+    -l N     If a process has more than or equal to N CLOSE_WAIT
+             socket(s), it will be killed with a signal (default:
+             $MAX_COUNT)
 
-    -i N     Set sleep interval between checks in seconds (default: $INTERVAL)
+    -i N     Set sleep interval between checks in seconds
+             (default: $INTERVAL)
 
-    -s SIG   Set the signal name (e.g. TERM or KILL) that will be send to a process
-             (default: $SIGNAL)
-    -w SEC   Set the waiting time in seconds between the signal and SIGKILL
-             (default: $SIGWAIT)
+    -s SIG   Set the signal name (e.g. TERM or KILL) that will be send
+             to a process (default: $SIGNAL)
+
+    -w SEC   Set the waiting time in seconds between the signal and
+             SIGKILL (default: $SIGWAIT)
+
+    -d       dry run, no kill
+    -D       debug mode
 
     -h       show this poor help messages and exit
     -v       show version information and exit
 
-Note that if a process receives the signal, and the process is alive for $SIGWAIT
-second(s), the process will receive SIGKILL.  
+Note that if a process receives the signal, and the process is alive
+for $SIGWAIT second(s), the process will receive SIGKILL.
 
 EOF
     exit 0
@@ -50,13 +56,19 @@ function version_and_exit() {
     exit 0
 }
 
-while getopts hvf:s:i:l:w: opt; do
+while getopts hvdf:Ds:i:l:w: opt; do
     case $opt in
         f)
             FILTER="$OPTARG"
             ;;
         l)
             MAX_COUNT=$OPTARG
+            ;;
+        D)
+            DEBUG_MODE=1
+            ;;
+        d)
+            DRY_RUN=1
             ;;
         w)
             SIGWAIT=$OPTARG
@@ -87,11 +99,49 @@ echo "signal: $SIGNAL"
 
 trap "rm -f \"$SCRIPT\"; exit 1;" SIGINT SIGTERM SIGHUP SIGQUIT
 
+#
+# "netstat -t -p --numeric-ports -e" will print something like these:
+#
+# tcp        0      0 ip-10-149-8-221.ec2.i:40165 ec2-54-225-237-102.com:6379 CLOSE_WAIT  root       29692      4402/java           
+# tcp        1      0 ip-10-149-8-221.ec2.i:10011 ip-10-83-118-89.ec2.i:48912 CLOSE_WAIT  root       0          -
+#
+# As in above, in second line, the line did not have PID/COMMAND in
+# the last fields ($9).  Here, the internal port is 10011, and
+# fuser(1) can give the proper PID when executed with "-n tcp 10011".
+#
+
+#
+# Sometimes, fuser(1) output will be either of
+# 
+# $ fuser -n tcp 10010
+# 10010/tcp:            2285
+#
+# $ fuser -n tcp 10010
+# 10010/tcp:            2285  3540  3548
+#
 cat > $SCRIPT <<EOF
-{
+/^tcp/ {
     m = match(\$9, /([0-9][0-9]*)\/[^/]*/, ary); 
-    if (m != 0)   
+    if (m != 0) {
+        # handle "port/command" value in the last field.
         sum[ary[1]] += 1;
+    }
+    else {
+        if (\$9 == "-") {
+            # handle if the last field is "-"
+            m = match(\$4, /[^:]*:([0-9][0-9]*)/, ary);
+            if (m != 0) {
+                port = ary[1];
+                "fuser -n tcp " port " 2>/dev/null" | getline pid
+                # extract the first process from fuser output
+                m = match(pid, /[ \t]*([0-9]+).*/, ary)
+                if (m != 0) {
+                    #printf "port(%s) belongs to process(%s)\n", port, ary[1]
+                    sum[ary[1]] += 1
+                }
+            }
+        }
+    }
 }
 
 END {
@@ -110,6 +160,11 @@ function log() {
 function log_noprog() {
     echo "$@" >> $LOG_FILE
     echo "$@" 1>&2
+    return 0
+}
+
+function debug() {
+    [ -n "$DEBUG_MODE" ] && echo "$PROGNAME: $@" 1>&2
     return 0
 }
 
@@ -132,30 +187,41 @@ function check_rights() {
 
 function xkill() {
     pid=$1
-    (echo kill -$SIGNAL "$pid";
+    (kill -$SIGNAL "$pid";
         sleep "$SIGWAIT";
         kill -0 "$pid" >&/dev/null && \
             log "process $pid didn't exit, force killing" && \
-            echo kill -9 "$pid";)&
+            kill -9 "$pid";)&
     return 0
 }
+
+#declare -a CWCOUNT
 
 while true; do
     PCOUNT=0
     #netstat -p --numeric-ports -e | grep CLOSE_WAIT | awk -f "$SCRIPT" 
-    netstat -p --numeric-ports -e 2>/dev/null| grep CLOSE_WAIT | awk -f "$SCRIPT" | \
+    netstat -t -p --numeric-ports -e 2>/dev/null | \
+        grep CLOSE_WAIT | awk -f "$SCRIPT" | \
+
         while read line; do
         pid=`echo "$line" | awk '{ print $1 }'`;
         count=`echo "$line" | awk '{ print $2}'`;
-        if test "$count" -ge 2; then
+
+        debug "process[$pid] = $count"
+
+        if test "$count" -ge "$MAX_COUNT"; then
             if test "$PCOUNT" -eq 0; then
                 PCOUNT=1
                 log_noprog "# `date -u -Iseconds`"
             fi
 
             if check_rights "$pid"; then
-                xkill "$pid"
-                log "process $pid has more than $count CLOSE_WAIT socket(s), killed"
+                if [ -z "$DRY_RUN" ]; then
+                    xkill "$pid"
+                    log "process $pid has more than $count CLOSE_WAIT socket(s), killed"
+                else
+                    log "process $pid has more than $count CLOSE_WAIT socket(s), dry run"
+                fi
             fi
         fi;
     done

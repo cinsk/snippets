@@ -2,6 +2,7 @@
 
 SCRIPT=/tmp/awk.$$
 LOG_FILE=/var/log/resreap.log
+PID_FILE=/var/run/resreap.pid
 
 # if a process has equal to or greater than MAX_COUNT CLOSE_WAIT socket(s),
 # it will be killed
@@ -12,6 +13,12 @@ INTERVAL=5
 
 SIGNAL=TERM
 SIGWAIT=2
+
+
+DATE=${DATE:-$(which date 2>/dev/null)}
+NETSTAT=${NETSTAT:-$(which netstat 2>/dev/null)}
+FUSER=${FUSER:-$(which fuser 2>/dev/null)}
+AWK=${AWK:-$(which awk 2>/dev/null)}
 
 PROGNAME=`basename $0`
 VERSION_STRING=0.1
@@ -48,6 +55,11 @@ Usage: $PROGNAME [OPTION...]
 Note that if a process receives the signal, and the process is alive
 for $SIGWAIT second(s), the process will receive SIGKILL.
 
+If you are going to use "-f" option, I recommend to try "-d -D" option
+first.  If you get the pid of the culprit process, try to get the
+command name by "ps -p PID -o command=" where PID is the pid of that
+process.
+
 EOF
     exit 0
 }
@@ -59,25 +71,57 @@ function version_and_exit() {
 }
 
 
+function check_environ() {
+    echo "netstat: $NETSTAT"
+    if [ ! -x "$NETSTAT" ]; then
+        error 1 "netstat(1) not found"
+    fi
+
+    if [ ! -x "$FUSER" ]; then
+        error 1 "fuser(1) not found"
+    fi
+
+    if [ ! -x "$AWK" ]; then
+        error 1 "awk(1) not found"
+    fi
+
+    if [ ! -x "$DATE" ]; then
+        error 1 "date(1) not found"
+    fi
+}
+
+
+function error() {
+    # Usage: log MESSAGE
+    code=$1
+    shift
+    echo "$PROGNAME: $@" 1>&2
+    if [ "$code" -ne 0 ]; then
+        exit $code;
+    fi
+    return 0
+}
+
+
 function log() {
     # Usage: log MESSAGE
-    echo "$PROGNAME: $@" >> $LOG_FILE
-    echo "$PROGNAME: $@" 1>&2
+    echo -e "$PROGNAME: $@" >> $LOG_FILE
+    echo -e "$PROGNAME: $@" 1>&2
     return 0
 }
 
 
 function log_noprog() {
     # Usage: log_noprog MESSAGE
-    echo "$@" >> $LOG_FILE
-    echo "$@" 1>&2
+    echo -e "$@" >> $LOG_FILE
+    echo -e "$@" 1>&2
     return 0
 }
 
 
 function debug() {
     # Usage: debug MESSAGE
-    [ -n "$DEBUG_MODE" ] && echo "$PROGNAME: $@" 1>&2
+    [ -n "$DEBUG_MODE" ] && echo -e "$PROGNAME: $@" 1>&2
     return 0
 }
 
@@ -110,6 +154,8 @@ function xkill() {
     return 0
 }
 
+
+check_environ
 
 while getopts hvdf:Ds:i:l:w: opt; do
     case $opt in
@@ -154,7 +200,9 @@ debug "interval: $INTERVAL"
 debug "signal: $SIGNAL"
 debug "filter: |$FILTER|"
 
-trap "rm -f \"$SCRIPT\"; exit 1;" SIGINT SIGTERM SIGHUP SIGQUIT
+trap "rm -f \"$PID_FILE\" \"$SCRIPT\"; exit 1;" SIGINT SIGTERM SIGHUP SIGQUIT
+
+echo "$$" > "$PID_FILE"
 
 #
 # "netstat -t -p --numeric-ports -e" will print something like these:
@@ -215,7 +263,8 @@ EOF
 while true; do
     PCOUNT=0
     #netstat -p --numeric-ports -e | grep CLOSE_WAIT | awk -f "$SCRIPT" 
-    netstat -t -p --numeric-ports -e 2>/dev/null | \
+    debug "--"
+    netstat -t -p --numeric-ports -e | \
         grep CLOSE_WAIT | awk -f "$SCRIPT" | \
 
         while read line; do
@@ -232,11 +281,12 @@ while true; do
             fi
 
             if check_rights "$pid"; then
+                cmd=$(ps -p $pid -o command=)
                 if [ -z "$DRY_RUN" ]; then
                     xkill "$pid"
-                    log "process $pid has more than $count CLOSE_WAIT socket(s), killed"
+                    log "process $pid has more than $count CLOSE_WAIT socket(s), killed\n  command: $cmd"
                 else
-                    log "process $pid has more than $count CLOSE_WAIT socket(s), dry run"
+                    log "process $pid has more than $count CLOSE_WAIT socket(s), dry run\n  command: $cmd"
                 fi
             fi
         fi;

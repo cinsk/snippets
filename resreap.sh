@@ -31,26 +31,29 @@ function usage_and_exit() {
 Kill processes that have enough CLOSE_WAIT socket(s)
 Usage: $PROGNAME [OPTION...]
 
-    -f PAT   Kill only processes whose command matches PAT
+    -f PAT      Kill only processes whose command matches PAT
 
-    -l N     If a process has more than or equal to N CLOSE_WAIT
-             socket(s), it will be killed with a signal (default:
-             $MAX_COUNT)
+    -l N        If a process has more than or equal to N CLOSE_WAIT
+                socket(s), it will be killed with a signal (default:
+                $MAX_COUNT)
 
-    -i N     Set sleep interval between checks in seconds
-             (default: $INTERVAL)
+    -i N        Set sleep interval between checks in seconds
+                (default: $INTERVAL)
 
-    -s SIG   Set the signal name (e.g. TERM or KILL) that will be send
-             to a process (default: $SIGNAL)
+    -c CMD      Before sending a signal, execute CMD in the shell,
+                If this CMD returns non-zero returns, the process
+                will not receive any signal.
+ 
+    -s SIG      Set the signal name (e.g. TERM or KILL) that will be send
+                to a process (default: $SIGNAL)
+    -w SEC      Set the waiting time in seconds between the signal and
+                SIGKILL (default: $SIGWAIT)
 
-    -w SEC   Set the waiting time in seconds between the signal and
-             SIGKILL (default: $SIGWAIT)
+    -d          dry run, no kill
+    -D          debug mode
 
-    -d       dry run, no kill
-    -D       debug mode
-
-    -h       show this poor help messages and exit
-    -v       show version information and exit
+    -h          show this poor help messages and exit
+    -v          show version information and exit
 
 Note that if a process receives the signal, and the process is alive
 for $SIGWAIT second(s), the process will receive SIGKILL.
@@ -60,6 +63,8 @@ first.  If you get the pid of the culprit process, try to get the
 command name by "ps -p PID -o command=" where PID is the pid of that
 process.
 
+You could send two signal(s) before sending SIGKILL using '-S' option.
+This can be useful since some JVM print stacktrace on SIGQUIT.
 EOF
     exit 0
 }
@@ -72,7 +77,6 @@ function version_and_exit() {
 
 
 function check_environ() {
-    echo "netstat: $NETSTAT"
     if [ ! -x "$NETSTAT" ]; then
         error 1 "netstat(1) not found"
     fi
@@ -131,14 +135,14 @@ function check_rights() {
     pid=$1
     euid=$(id -u)
     if test "$euid" -ne 0 -a "$euid" -ne "$(ps -p $pid -o euid=)"; then
-        log "didn't have enough access rights to kill process $pid"
+        debug "didn't have enough access rights to kill process $pid"
         return 1;
     fi
 
     echo "$(ps -p $pid -o command=)" | grep "$FILTER" >/dev/null
     ret=$?
     if test "$ret" -ne 0; then
-        log "process $pid does not match to the filter, skipped"
+        debug "process $pid does not match to the filter, skipped"
     fi
     return $ret
 }
@@ -146,7 +150,9 @@ function check_rights() {
 
 function xkill() {
     pid=$1
-    (kill -$SIGNAL "$pid";
+
+    (   [ -n "$USRCMD" ] && if ! eval "( exec >&$LOG_FILE; $USRCMD )"; then exit $?; fi
+        kill -$SIGNAL "$pid";
         sleep "$SIGWAIT";
         kill -0 "$pid" >&/dev/null && \
             log "process $pid didn't exit, force killing" && \
@@ -157,7 +163,7 @@ function xkill() {
 
 check_environ
 
-while getopts hvdf:Ds:i:l:w: opt; do
+while getopts hvdf:Ds:i:l:w:c: opt; do
     case $opt in
         f)
             FILTER="$OPTARG"
@@ -179,6 +185,9 @@ while getopts hvdf:Ds:i:l:w: opt; do
             ;;
         s)
             SIGNAL=$OPTARG
+            ;;
+        c)
+            USRCMD=$OPTARG
             ;;
         h)
             usage_and_exit

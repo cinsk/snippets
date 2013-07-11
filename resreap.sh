@@ -2,6 +2,9 @@
 
 SCRIPT=/tmp/awk.$$
 LOG_FILE=/var/log/resreap.log
+
+CMDLOG_DIR=/var/log/resreap
+
 PID_FILE=/var/run/resreap.pid
 
 # if a process has equal to or greater than MAX_COUNT CLOSE_WAIT socket(s),
@@ -150,8 +153,12 @@ function check_rights() {
 
 function xkill() {
     pid=$1
-
-    (   [ -n "$USRCMD" ] && if ! eval "( exec >>\"$LOG_FILE\" 2>&1; $USRCMD )"; then exit $?; fi
+    cmdlog=$(mktemp \"$CMDLOG_DIR/cmdout.$pid.xxxx\")
+    (   [ -n "$USRCMD" ] && if eval "( $USRCMD >&\"$cmdlog\" )"; then 
+            log "process $pid command log saved to $cmdlog"
+        else
+            exit $?;
+        fi
         kill -$SIGNAL "$pid";
         sleep "$SIGWAIT";
         kill -0 "$pid" >&/dev/null && \
@@ -268,11 +275,11 @@ EOF
 
 
 #declare -a CWCOUNT
+mkdir -p "$CMDLOG_DIR"
 
 while true; do
     PCOUNT=0
     #netstat -p --numeric-ports -e | grep CLOSE_WAIT | awk -f "$SCRIPT" 
-    debug "--"
     netstat -t -p --numeric-ports -e | \
         grep CLOSE_WAIT | awk -f "$SCRIPT" | \
 

@@ -151,7 +151,7 @@ function check_rights() {
 function xkill() {
     pid=$1
 
-    (   [ -n "$USRCMD" ] && if ! eval "( exec >&$LOG_FILE; $USRCMD )"; then exit $?; fi
+    (   [ -n "$USRCMD" ] && if ! eval "( exec >>\"$LOG_FILE\" 2>&1; $USRCMD )"; then exit $?; fi
         kill -$SIGNAL "$pid";
         sleep "$SIGWAIT";
         kill -0 "$pid" >&/dev/null && \

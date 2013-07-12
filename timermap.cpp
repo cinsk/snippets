@@ -54,12 +54,13 @@ main(void)
       loop = false;
     }
 #else
+    m.erase(0);
     TMAP::Ptr ptr = m.get(1);
     if (ptr)
       xerror(0, 0, "main: 1 = %s", (*ptr)->what());
     else {
       xerror(0, 0, "main: not found");
-      //loop = false;
+      loop = false;
     }
 
 #endif  // 0

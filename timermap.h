@@ -45,7 +45,11 @@
 //       element, so that several threads can access elements, as long
 //       as each thread access different element.
 
+#ifdef DEBUG
+#define XDEBUG  xdebug
+#else
 #define XDEBUG(...)  ((void)0)
+#endif
 
 template <typename K, typename V>
 class TimerMap {
@@ -206,6 +210,20 @@ public:
   }
 
   //key_type foo(const key_type &k) { return k; }
+
+  void erase(const key_type &k) {
+    lock("erase");
+    typename tmap_type::iterator i = tmap_.find(k);
+    if (i != tmap_.end()) {
+      TMENT &ent = (*i).second;
+      ent.lock("erase");
+      typename map_type::iterator j = map_.find((*i).first);
+      map_.erase(j);
+      ent.unlock("erase");
+      tmap_.erase(i);
+    }
+    unlock("erase");
+  }
 
   void set(const key_type &k, const V &v) {
     lock("set");

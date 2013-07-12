@@ -153,7 +153,7 @@ function check_rights() {
 
 function xkill() {
     pid=$1
-    cmdlog=$(mktemp \"$CMDLOG_DIR/cmdout.$pid.xxxx\")
+    cmdlog=$(mktemp "$CMDLOG_DIR/cmdout.$pid.XXXX")
     (   [ -n "$USRCMD" ] && if eval "( $USRCMD >&\"$cmdlog\" )"; then 
             log "process $pid command log saved to $cmdlog"
         else

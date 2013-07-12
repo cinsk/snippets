@@ -4,14 +4,6 @@
 #include "timermap.h"
 
 
-time_t
-gettime()
-{
-  return time(0);
-}
-
-
-
 class Foo {
 public:
   Foo() {
@@ -28,11 +20,12 @@ public:
 };
 
 
-
 int
 main(void)
 {
   xerror_init(0, 0);
+
+  xerror(0, 0, "pid: %d", getpid());
 
   typedef TimerMap<int, boost::shared_ptr<Foo> > TMAP;
   TMAP m(2);
@@ -42,47 +35,36 @@ main(void)
     boost::shared_ptr<Foo> ptr(new Foo());
     m.set(0, ptr);
   }
-
-  bool loop = true;
-#if 1
-  while (loop) {
-
-    //for (TimerMap<int, boost::shared_ptr<int> >::Lock l(m.lock__()); l; ) {
-    TIMERMAP_SYNC(TMAP, m) {
-      try {
-        boost::shared_ptr<Foo> ptr = m.get(0);
-
-        xerror(0, 0, "main: 0 = %s", ptr->what());
-      }
-      catch (std::out_of_range &e) {
-        xerror(0, 0, "main: exception: %s", e.what());
-        loop = false;
-        break;
-      }
-    }
-    //sleep(2);
-  }
-#endif  // 0
-
-#if 1
   {
     boost::shared_ptr<Foo> ptr(new Foo());
     m.set(1, ptr);
   }
 
+  bool loop = true;
+
   loop = true;
   while (loop) {
+#if 0
     try {
-      TimerMap<int, boost::shared_ptr<Foo> >::Ptr ptr = m.getptr(1);
-      xerror(0, 0, "main: 1 = %s", ptr->what());
+      TMAP::Ptr ptr = m.get(1);
+      xerror(0, 0, "main: 1 = %s", (*ptr)->what());
     }
     catch (std::out_of_range &e) {
       xerror(0, 0, "main: exception: %s", e.what());
       loop = false;
     }
-    //sleep(2);
-  }
+#else
+    TMAP::Ptr ptr = m.get(1);
+    if (ptr)
+      xerror(0, 0, "main: 1 = %s", (*ptr)->what());
+    else {
+      xerror(0, 0, "main: not found");
+      //loop = false;
+    }
+
 #endif  // 0
+    usleep(100000);
+  }
 
   //printf("%p\n", (void *)TimerMap<int, boost::shared_ptr<int> >::timer_main);
   return 0;

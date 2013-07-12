@@ -22,28 +22,11 @@
 //   typedef TimerMap<int, boost::shared_ptr<Foo> > TMAP;
 //   TMAP m;
 //
-// To retrive a value (e.g. where key is 0), you need a lock.  There
-// are two interface for retrival:
+// To retrive a value (e.g. where key is 0), you need a lock:
 //
 // 1)
-//   TIMERMAP_SYNC(TMAP, m) {
-//     try {
-//       boost::shared_ptr<Foo> ptr = m.get(0);
-//       ptr->SOME_OPERATION();
-//     }
-//     catch (std::out_of_range &e) {
-//       // the key, 0 is not found in the map
-//       break;
-//     }
-//   }
-//
-// TIMERMAP_SYNC will lock the whole map (for now, I suppose), and
-// you can safely use the (key, value) pair.  In this block, the
-// pair will be not expired Even if EXPIRATION time reached.
-//
-// 2)
 //   try {
-//     boost::shared_ptr<Foo> ptr = m.getptr(0);
+//     boost::shared_ptr<Foo> ptr = m.get(0);
 //     ptr->SOME_OPERATION();
 //   }
 //   catch (std::out_of_range &e) {
@@ -62,13 +45,68 @@
 //       element, so that several threads can access elements, as long
 //       as each thread access different element.
 
+#define XDEBUG(...)  ((void)0)
+
 template <typename K, typename V>
 class TimerMap {
 
-  typedef std::map<K, time_t> tmap_type;
+  struct TMENT {
+    time_t tm;
+    ::pthread_mutex_t lck;
+
+    TMENT() : tm(time(0)) {
+      ::pthread_mutexattr_t attr;
+      ::pthread_mutexattr_init(&attr);
+      ::pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+      ::pthread_mutex_init(&lck, &attr);
+      ::pthread_mutexattr_destroy(&attr);
+    }
+
+    TMENT(const TMENT &ent) : tm(ent.tm) {
+      ::pthread_mutexattr_t attr;
+      ::pthread_mutexattr_init(&attr);
+      ::pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+      ::pthread_mutex_init(&lck, &attr);
+      ::pthread_mutexattr_destroy(&attr);
+    }
+
+    ~TMENT() {
+      int ret;
+      if ((ret = ::pthread_mutex_destroy(&lck)) != 0) {
+        XDEBUG(ret, "locked mutex at pthread_mutex_destroy()");
+        ::abort();
+      }
+    }
+
+    void lock(const char *prefix = 0)    {
+      XDEBUG(0, "%s TMENT: lock", prefix ? prefix : 0);
+      pthread_mutex_lock(&lck);
+    }
+    void unlock(const char *prefix = 0)  {
+      XDEBUG(0, "%s TMENT: unlock", prefix ? prefix : 0);
+      pthread_mutex_unlock(&lck);
+    }
+    bool trylock(const char *prefix = 0) {
+      bool ret = (pthread_mutex_trylock(&lck) == 0);
+      XDEBUG(0, "%s TMENT trylock %s",
+             prefix ? prefix : "", ret ? "locked" : "nolock");
+      return ret;
+    }
+
+    void refresh() { tm = time(0); }
+    bool expired(time_t now, time_t expiration) {
+      return (now - tm) > expiration;
+    }
+  };
+
+  typedef std::map<K, TMENT> tmap_type;
   typedef std::map<K, V> map_type;
 
   tmap_type tmap_;
+
+  // Note to maintainers:
+  //   Access to map_[k] MUST be synchronized with tmap_[k].
+  //   Specifically, to access map_[k], you need to tmap_[k].lock()
   map_type map_;
 
   TimerMap(const TimerMap &);
@@ -76,12 +114,62 @@ class TimerMap {
   pthread_t timer_thread;
   pthread_mutex_t lock_;
 
-  V &operator[](const K &k) {
-    return map_[k];
-  }
-
   int expiration_;
   bool refresh_;
+
+  void lock(const char *prefix = 0)    {
+    XDEBUG(0, "%s lock", prefix ? prefix : "");
+    pthread_mutex_lock(&lock_);
+  }
+  void unlock(const char *prefix = 0)  {
+    XDEBUG(0, "%s unlock", prefix ? prefix : "");
+    pthread_mutex_unlock(&lock_);
+  }
+  bool trylock(const char *prefix = 0) {
+    bool ret = (pthread_mutex_trylock(&lock_) == 0);
+    XDEBUG(0, "%s trylock %s",
+           prefix ? prefix : "", ret ? "locked" : "nolock");
+    return ret;
+  }
+
+  // This function will release the lock holding the element pointed by I,
+  // and remove the element from TimerMap if it is expired.
+  bool remove_if_expired(typename tmap_type::iterator i) {
+    // assuming that 'this' is locked.
+    // assuming that (*i).second (type: TMENT) is locked.
+
+    if (i == tmap_.end())
+      return false;
+    TMENT &ent = (*i).second;
+    time_t now = ::time(0);
+
+    if (ent.expired(now, expiration_)) {
+      typename map_type::iterator j = map_.find((*i).first);
+      map_.erase(j);
+      ent.unlock("remove");
+      tmap_.erase(i);
+      return true;
+    }
+    ent.unlock("remove");
+    return false;
+  }
+
+  // This function will scan all elements and remove the elements that
+  // are expired.
+  void remove_expired() {
+    // should be called with tmap->lock_ is locked.
+    typename tmap_type::iterator i = tmap_.begin();
+
+    while (i != tmap_.end()) {
+      TMENT &ent = (*i).second;
+
+      if (ent.trylock("remove")) {
+        // To speed-up, remove expired items iff we can get the lock
+        // instantly.
+        remove_if_expired(i++);
+      }
+    }
+  }
 
 public:
   static void *timer_main(void *arg);
@@ -90,8 +178,10 @@ public:
   typedef typename std::map<K, V>::key_type key_type;
   typedef typename std::map<K, V>::mapped_type mapped_type;
   typedef typename std::map<K, V>::value_type value_type;
+  typedef V element_type;
 
-  explicit TimerMap(int expiration, bool refresh = false) : map_(), expiration_(expiration), refresh_(refresh) {
+  explicit TimerMap(int expiration, bool refresh = false)
+    : map_(), expiration_(expiration), refresh_(refresh) {
     // TODO: change to recusive lock
     int ret;
     ::pthread_mutexattr_t attr;
@@ -111,127 +201,101 @@ public:
 
     ::pthread_cancel(timer_thread);
     ::pthread_join(timer_thread, &pret);
-    // xdebug(0, "timer_thread returns %p", pret);
+    // XDEBUG(0, "timer_thread returns %p", pret);
     ::pthread_mutex_destroy(&lock_);
   }
 
   //key_type foo(const key_type &k) { return k; }
 
   void set(const key_type &k, const V &v) {
-    pthread_mutex_lock(&lock_);
-    tmap_[k] = ::time(0);
-    map_[k] = v;
-    pthread_mutex_unlock(&lock_);
-  }
-
-  V &get(const key_type &k) {
-#ifndef NDEBUG
-    if (::pthread_mutex_trylock(&lock_) != 0) {
-      abort();
-    }
-    ::pthread_mutex_unlock(&lock_);
-#endif  // NDEBUG
-
-    time_t now = ::time(0);
-
+    lock("set");
     typename tmap_type::iterator i = tmap_.find(k);
-    if (i == tmap_.end())
-      throw std::out_of_range("not found");
-
-    if (now - (*i).second > expiration_) {
-      throw std::out_of_range("not found (expired)");
+    if (i == tmap_.end()) {     // new entry
+      TMENT ent = TMENT();
+      tmap_[k] = ent;
+      ent.lock("set");
+      unlock("set");
+      map_[k] = v;
+      ent.unlock("set");
     }
-    else {
-      if (refresh_)
-        (*i).second = ::time(0);
-      return map_[k];
+    else {                      // existing entry
+      TMENT &ent = ((*i).second);
+      ent.lock("set");
+      unlock("set");
+      ent.refresh();
+      map_[k] = v;
+      ent.unlock("set");
     }
   }
 
-  ::pthread_mutex_t &lock__() { return lock_; }
+  void set_timedwait(const key_type &k, const V &v, ...);
 
   class Ptr {
-    ::pthread_mutex_t &lock_;
-    bool evaluated;
-    V *value_;
+    TMENT *p;
+
+    mapped_type *vp;
 
   public:
-    Ptr(const Ptr &oldptr)
-      : lock_(oldptr.lock_), evaluated(oldptr.evaluated), value_(oldptr.value_) {
-      xdebug(0, "Ptr2::LOCK");
-      ::pthread_mutex_lock(&lock_);;
+    Ptr(const Ptr &ptr) : p(ptr.p), vp(ptr.vp) {
+      XDEBUG(0, "Ptr copy CTOR");
+      if (p)
+        p->lock("ptr");
     }
-
-    Ptr(::pthread_mutex_t &lck, TimerMap &m, const key_type &k)
-      : lock_(lck), evaluated(false), value_(0) {
-      xdebug(0, "Ptr::LOCK");
-      ::pthread_mutex_lock(&lock_);;
-      try {
-        value_ = &m.get(k);
-      }
-      catch (std::out_of_range &e) {
-        value_ = 0;
-
-        // Warning, if m.get() raises an exception, then the
-        // destructor of this class instance never be called, since
-        // the instance is not fully constructed.  Thus, we need to
-        // unlock the mutex here.
-        ::pthread_mutex_unlock(&lock_);;
-
-        throw;
-      }
+    Ptr() : p(0), vp(0) {
+      XDEBUG(0, "Ptr default CTOR");
+    }
+    Ptr(TMENT *ent, mapped_type *value) : p(ent), vp(value) {
+      XDEBUG(0, "Ptr CTOR");
     }
     ~Ptr() {
-      xdebug(0, "Ptr::UNLOCK");
-      ::pthread_mutex_unlock(&lock_);
+      XDEBUG(0, "Ptr DTOR");
+      // TODO#C: it would be better if we check the expiration
+      //         and release it.
+      if (p)
+        p->unlock("ptr");
     }
 
-    operator bool() {
-      bool ret = !evaluated;
-      if (!evaluated) evaluated = true;
-      return ret;
+    element_type *operator->() {
+      if (vp)
+        return vp;
+      throw std::out_of_range("not found");
     }
 
-#if 0
-    typename V::element_type &get() {
-      return *(*value_).get();
+    element_type &operator*() {
+      if (vp)
+        return *vp;
+      throw std::out_of_range("not found");
     }
 
-    typename V::element_type &operator()() {
-      return *(*value_).get();
-    }
-#endif  // 0
-
-    typename V::element_type *operator->() {
-      return (*value_).get();
-    }
+    operator bool() { return vp != 0; }
   };
 
-  Ptr getptr(const key_type &k) {
-    return Ptr(lock_, *this, k);
+  Ptr get(const key_type &k) {
+    lock("get");
+    typename tmap_type::iterator i = tmap_.find(k);
+    if (i == tmap_.end()) {
+      unlock("get");
+      //throw std::out_of_range("not found");
+      return Ptr();
+    }
+
+    TMENT &ent = (*i).second;
+    ent.lock("get");
+    unlock("get");
+    time_t now = ::time(0);
+
+    if (ent.expired(now, expiration_)) {
+      // TODO: remove it?
+      ent.unlock("get");
+      //throw std::out_of_range("not found (expired)");
+      return Ptr();
+    }
+    if (refresh_)
+      ent.refresh();
+
+    return Ptr(&ent, &map_[k]);
   }
 
-  class Lock {
-    ::pthread_mutex_t &lock_;
-    Lock(const Lock &);
-    bool evaluated;
-
-  public:
-    Lock(::pthread_mutex_t &lck) : lock_(lck), evaluated(false) {
-      xdebug(0, "LOCK");
-      ::pthread_mutex_lock(&lock_);;
-    }
-    ~Lock() {
-      xdebug(0, "UNLOCK");
-      ::pthread_mutex_unlock(&lock_);
-    }
-
-    operator bool() {
-      bool ret = !evaluated;
-      if (!evaluated) evaluated = true;
-      return ret;
-    }
-  };
 };
 
 
@@ -241,44 +305,21 @@ TimerMap<K, V>::timer_main(void *arg)
 {
   TimerMap *map = reinterpret_cast<TimerMap *>(arg);
   int oldstate;
-  time_t now;
-
-  xdebug(0, "timer: begin");
 
   while (1) {
     pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &oldstate);
     sleep(map->timer_interval);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &oldstate);
 
-    xdebug(0, "timer: check start");
-    if (pthread_mutex_trylock(&map->lock_) == 0) {
-      now = ::time(0);
+    if (!map->trylock("timer"))
+      continue;
 
-      typename tmap_type::iterator i = map->tmap_.begin();
-      while (i != map->tmap_.end()) {
-        // xdebug(0, "timer: now(%ld) checking %d timer (%ld)\n", now, (*i).first, (*i).second);
-        if ((now - (*i).second) > map->expiration_) {
-          typename map_type::iterator j = map->map_.find((*i).first);
-          if (j != map->map_.end()) {
-            //xdebug(0, "timer: deleting %d", (*i).first);
-            map->map_.erase(j);
-          }
-          else {
-            //xdebug(0, "timer: index %d not found", (*i).first);
-          }
-
-          map->tmap_.erase(i++);
-        }
-        else
-          ++i;
-      }
-      pthread_mutex_unlock(&map->lock_);
-    }
-
+    XDEBUG(0, "timer: GC begin");
+    map->remove_expired();
+    XDEBUG(0, "timer: GC end");
+    map->unlock("timer");
   }
   return (void *)0;
 }
-
-#define TIMERMAP_SYNC(type, m)        for (type::Lock l((m).lock__()); l; )
 
 #endif  // TIMERMAP_H__

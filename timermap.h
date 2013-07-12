@@ -1,6 +1,8 @@
 /* -*-c++-*- */
 
 #ifndef TIMERMAP_H__
+#define TIMERMAP_H__
+
 #include <map>
 #include <stdexcept>
 #include <pthread.h>

@@ -280,7 +280,7 @@ at_exit {
 system("mkdir -p \"#{CMDLOG_DIR}\"")
 
 begin
-  File.open(PIDFILE, "w") { |file| file.write("#{$$}") }
+  File.open(PIDFILE, "w") { |file| file.write("#{$$}\n") }
 rescue => e
   log "warning: can't write pidfile: #{e.message}", false
 end

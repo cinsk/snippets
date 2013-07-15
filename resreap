@@ -271,7 +271,7 @@ debug "debug: #{$DEBUG}"
 at_exit {
   #[ "INT", "HUP", "TERM", "QUIT" ].each { |sigspec|
   #Signal.trap(sigspec) do
-  puts "at_exit handler: "
+  #puts "at_exit handler: "
   system("rm -f \"#{PIDFILE}\"")
   #shutdown()
 #end

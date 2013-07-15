@@ -20,6 +20,8 @@ $COMMAND = nil
 $DRYRUN = true
 $DEBUG = false
 
+$FOREIGN_IGNORES = []
+
 NS_PROTOCOL = 0
 NS_RECVQ = 1
 NS_SENDQ = 2
@@ -54,6 +56,28 @@ def debug(msg)
   $stderr.write("#{msg}\n") if $DEBUG
 end  
 
+def parse_hostport(s)
+  ipv6 = true if s.count(":") > 1
+
+  if ipv6
+    m = /::[fF][fF][fF][fF]:([^:]+):([0-9]+)/.match(s)
+    if m
+      host = m[1]
+      port = m[2].to_i
+    else
+      idx = s.rindex(":")
+      if idx
+        host = s[0...idx]
+        port = s[idx+1..-1]
+      end
+    end
+  else
+    host, port = s.split(":")
+    port = port.to_i
+  end
+  return [ host, port ]
+end
+
 def xkill(pid)
   if not $DRYRUN
     if $COMMAND
@@ -79,12 +103,24 @@ end
 
 def netstat(state = nil)
   input = {}
-  lines = IO.popen('netstat -t -e --numeric-ports -p 2>/dev/null').readlines
+  lines = IO.popen('netstat -t -e -n -p 2>/dev/null').readlines
   lines.each { |line|
     tokens = line.split
     next if tokens[NS_PROTOCOL] != "tcp"
     next if state and tokens[NS_STATE] != state
     # puts "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
+    ignore = false
+    $FOREIGN_IGNORES.each { |host, port|
+      host2, port2 = parse_hostport(tokens[NS_FADDR])
+      #debug "comparing #{host}:#{port} with #{host2}:#{port2}"
+      if host == host2 and port == port2
+        #debug "ignore foreign endpoint (#{host}:#{port})"
+        ignore = true
+        break
+      end
+    }
+    next if ignore
+    
 
     if tokens[NS_PIDPROG] == "-"
       addr, port = tokens[NS_LADDR].split(":")
@@ -132,29 +168,31 @@ def help_and_exit
 Kill processes that have enough CLOSE_WAIT socket(s)
 Usage: #{PROGRAM_NAME} [OPTION...]
 
-    -f PAT      Kill only processes whose command matches PAT
+    -f PAT        Kill only processes whose command matches PAT
+    -F HOST:PORT  Ignore if foreign endpoint matches to HOST:PORT
+                  HOST should be in IPv4 numerical notation.
+    
+    -l N          If a process has more than or equal to N CLOSE_WAIT
+                  socket(s), it will be killed with a signal
+                  (default: #{$LIMIT})
 
-    -l N        If a process has more than or equal to N CLOSE_WAIT
-                socket(s), it will be killed with a signal
-                (default: #{$LIMIT})
+    -i N          Set sleep interval between checks in seconds
+                  (default: #{$INTERVAL})
 
-    -i N        Set sleep interval between checks in seconds
-                (default: #{$INTERVAL})
-
-    -c CMD      Before sending a signal, execute CMD in the shell,
-                If this CMD returns non-zero returns, the process
-                will not receive any signal.
+    -c CMD        Before sending a signal, execute CMD in the shell,
+                  If this CMD returns non-zero returns, the process
+                  will not receive any signal.
  
-    -s SIG      Set the signal name (e.g. TERM) that will be send
-                to a process (default: #{$SIGNAL})
-    -w SEC      Set the waiting time in seconds between the signal and
-                SIGKILL (default: #{$SIGWAIT})
+    -s SIG        Set the signal name (e.g. TERM) that will be send
+                  to a process (default: #{$SIGNAL})
+    -w SEC        Set the waiting time in seconds between the signal and
+                  SIGKILL (default: #{$SIGWAIT})
 
-    -d          dry run, no kill
-    -D          debug mode
+    -d            dry run, no kill
+    -D            debug mode
 
-    -h          show this poor help messages and exit
-    -v          show version information and exit
+    -h            show this poor help messages and exit
+    -v            show version information and exit
 
 Note that if a process receives the signal, and the process is alive
 for #{$SIGWAIT} second(s), the process will receive SIGKILL.
@@ -183,8 +221,9 @@ options = GetoptLong.new(
   [ '--command', '-c', GetoptLong::REQUIRED_ARGUMENT ],
   [ '--signal', '-s', GetoptLong::REQUIRED_ARGUMENT ],
   [ '--sigwait', '-w', GetoptLong::REQUIRED_ARGUMENT ],
-  [ '--dryrun', '-d', GetoptLong::NO_ARGUMENT ],                        
-  [ '--debug', '-D', GetoptLong::NO_ARGUMENT ],                        
+  [ '--dryrun', '-d', GetoptLong::NO_ARGUMENT ],
+  [ '--debug', '-D', GetoptLong::NO_ARGUMENT ],
+  [ '--foreign', '-F', GetoptLong::REQUIRED_ARGUMENT ],
   [ '--help', '-h', GetoptLong::NO_ARGUMENT ],
   [ '--version', '-n', GetoptLong::NO_ARGUMENT ]
 )
@@ -207,6 +246,12 @@ options.each { |opt, arg|
     $SIGNAL = arg.upcase
     when '--sigwait'
     $SIGWAIT = arg.to_i
+    when '--foreign'
+    begin
+      host, port = parse_hostport(arg)
+      $FOREIGN_IGNORES << [ host, port ]
+    end
+
     when '--dryrun'
     $DRYRUN = true
     when '--debug'

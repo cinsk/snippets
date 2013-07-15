@@ -1,0 +1,278 @@
+#!/usr/bin/env ruby
+# -*-ruby-*-
+
+require 'set'
+require 'getoptlong'
+
+$INTERVAL = 2
+$LIMIT = 2
+
+LOGFILE = "/var/log/resreap.log"
+CMDLOG_DIR = "/var/log/resreap"
+PIDFILE = "/var/run/resreap.pid"
+
+$SIGWAIT=2
+
+$SIGNAL = "TERM"
+$FILTER = nil
+
+$COMMAND = nil
+$DRYRUN = true
+$DEBUG = false
+
+NS_PROTOCOL = 0
+NS_RECVQ = 1
+NS_SENDQ = 2
+NS_LADDR = 3
+NS_FADDR = 4
+NS_STATE = 5
+NS_USER = 6
+NS_INODE = 7
+NS_PIDPROG = 8
+
+PROGRAM_NAME = File.basename($PROGRAM_NAME)
+VERSION_STRING = "0.1"
+
+def commandline(pid)
+  return `ps -p #{pid} -o command= 2>/dev/null`
+end
+
+def log(msg, trim = true)
+  begin
+    File.open(LOGFILE, "a") { |file| file.write("#{msg}\n") }
+  rescue => e
+  end
+
+  if trim and (msg.size > 70)
+    $stderr.write("#{msg[0..70]}...\n")
+  else
+    $stderr.write("#{msg}\n")
+  end
+end
+
+def debug(msg)
+  $stderr.write("#{msg}\n") if $DEBUG
+end  
+
+def xkill(pid)
+  if not $DRYRUN
+    if $COMMAND
+      cmdlog = `mktemp #{CMDLOG_DIR}/cmdout.#{$$}.XXXX`.chomp
+      cmdstat = system("( export pid=#{pid}; #{$COMMAND} >&\"#{cmdlog}\" )")
+      if cmdstat.nil?
+        log "warning: cannot execute the command, #{$COMMAND}", false
+        return false
+      end
+      log "process #{pid} command log saved to #{cmdlog}"
+      return if not cmdstat
+    end
+
+    system("( kill -#{$SIGNAL} #{pid}; sleep #{$SIGWAIT}; kill -0 #{pid} && \
+echo \"process $pid didn't exit, force killing\" >> \"#{LOGFILE}\" && \
+kill -9 #{pid} )& ")
+  else
+    log "process #{pid} is not killed, dryrun: #{commandline pid}"
+  end
+
+  return true
+end
+
+def netstat(state = nil)
+  input = {}
+  lines = IO.popen('netstat -t -e --numeric-ports -p 2>/dev/null').readlines
+  lines.each { |line|
+    tokens = line.split
+    next if tokens[NS_PROTOCOL] != "tcp"
+    next if state and tokens[NS_STATE] != state
+    # puts "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
+
+    if tokens[NS_PIDPROG] == "-"
+      addr, port = tokens[NS_LADDR].split(":")
+
+      if port
+        output = `fuser -n tcp #{port} 2>/dev/null`
+        if output.split[1]
+          pid = output.split[1].to_i
+          #entry = [ addr, port, pid, commandline(pid) ]
+
+          if not input[pid]
+            s = Set.new
+            s.add(port)
+
+            input[pid] = [ s, commandline(pid) ]
+          else
+            #puts "input[pid][0] = #{input[pid][1]}"
+            s = input[pid][0]
+            s.add(port)
+          end
+        end
+      end
+      next
+    else
+      pid, = tokens[NS_PIDPROG].split("/")
+      addr, port = tokens[NS_LADDR].split(":")
+
+      if not input[pid]
+        s = Set.new
+        s.add(port)
+
+        input[pid] = [ s, commandline(pid) ]
+      else
+        #puts "input[pid][0] = #{input[pid][1]}"
+        s = input[pid][0]
+        s.add(port)
+      end
+    end
+  }
+  return input
+end
+
+def help_and_exit
+  msg = <<END
+Kill processes that have enough CLOSE_WAIT socket(s)
+Usage: #{PROGRAM_NAME} [OPTION...]
+
+    -f PAT      Kill only processes whose command matches PAT
+
+    -l N        If a process has more than or equal to N CLOSE_WAIT
+                socket(s), it will be killed with a signal
+                (default: #{$LIMIT})
+
+    -i N        Set sleep interval between checks in seconds
+                (default: #{$INTERVAL})
+
+    -c CMD      Before sending a signal, execute CMD in the shell,
+                If this CMD returns non-zero returns, the process
+                will not receive any signal.
+ 
+    -s SIG      Set the signal name (e.g. TERM) that will be send
+                to a process (default: #{$SIGNAL})
+    -w SEC      Set the waiting time in seconds between the signal and
+                SIGKILL (default: #{$SIGWAIT})
+
+    -d          dry run, no kill
+    -D          debug mode
+
+    -h          show this poor help messages and exit
+    -v          show version information and exit
+
+Note that if a process receives the signal, and the process is alive
+for #{$SIGWAIT} second(s), the process will receive SIGKILL.
+
+If you are going to use "-f" option, I recommend to try "-d -D" option
+first.  If you get the pid of the culprit process, try to get the
+command name by "ps -p PID -o command=" where PID is the pid of that
+process.
+
+You could send two signal(s) before sending SIGKILL using '-S' option.
+This can be useful since some JVM print stacktrace on SIGQUIT.
+END
+  puts msg
+  exit 0
+end
+
+def version_and_exit
+  puts "#{PROGRAM_NAME} version #{VERSION_STRING}"
+  exit 0
+end
+
+options = GetoptLong.new(
+  [ '--limit', '-l', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--pattern', '-f', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--interval', '-i', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--command', '-c', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--signal', '-s', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--sigwait', '-w', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--dryrun', '-d', GetoptLong::NO_ARGUMENT ],                        
+  [ '--debug', '-D', GetoptLong::NO_ARGUMENT ],                        
+  [ '--help', '-h', GetoptLong::NO_ARGUMENT ],
+  [ '--version', '-n', GetoptLong::NO_ARGUMENT ]
+)
+
+options.each { |opt, arg|
+  case opt
+    when '--help'
+    help_and_exit
+    when '--version'
+    version_and_exit
+    when '--limit'
+    $LIMIT = arg.to_i
+    when '--pattern'
+    $FILTER = arg
+    when '--interval'
+    $INTERVAL = arg.to_i
+    when '--command'
+    $COMMAND = arg
+    when '--signal'
+    $SIGNAL = arg.upcase
+    when '--sigwait'
+    $SIGWAIT = arg.to_i
+    when '--dryrun'
+    $DRYRUN = true
+    when '--debug'
+    $DEBUG = true
+  end
+}
+
+debug "limit: #{$LIMIT}"
+debug "pattern: #{$FILTER}"
+debug "interval: #{$INTERVAL}"
+debug "command: #{$COMMAND}"
+debug "signal: #{$SIGNAL}"
+debug "signal wait: #{$SIGWAIT}"
+debug "dryrun: #{$DRYRUN}"
+debug "debug: #{$DEBUG}"
+
+at_exit {
+  #[ "INT", "HUP", "TERM", "QUIT" ].each { |sigspec|
+  #Signal.trap(sigspec) do
+  puts "at_exit handler: "
+  system("rm -f \"#{PIDFILE}\"")
+  #shutdown()
+#end
+}
+
+system("mkdir -p \"#{CMDLOG_DIR}\"")
+
+begin
+  File.open(PIDFILE, "w") { |file| file.write("#{$$}") }
+rescue => e
+  log "warning: can't write pidfile: #{e.message}", false
+end
+
+$INPUT1 = netstat "CLOSE_WAIT"
+
+$FILTER = Regexp.new $FILTER if $FILTER
+
+while true
+  sleep $INTERVAL
+  $INPUT2 = netstat "CLOSE_WAIT"
+
+  datecomment = true
+  $INPUT2.each_pair { |pid, data|
+    next if not $INPUT1[pid]
+
+    if $FILTER and not (data[1] =~ $FILTER)
+      debug "skipped: #{data[1]}"
+      next
+    end
+
+    newset = data[0];
+    oldset = $INPUT1[pid][0];
+
+    intsect = newset & oldset
+    #debug "process(#{pid}) has #{intsect.size} connection"
+
+    if (intsect.size >= $LIMIT)
+      log "process(#{pid}) has #{intsect.size} connections"
+      debug "\tPort(s): #{intsect.to_a.join(", ")}"
+
+      if datecomment
+        log "# " + `date -u -Iseconds`.chomp
+        datecomment = false
+      end
+      xkill pid
+    end
+  }
+  $INPUT1 = $INPUT2
+end

@@ -775,8 +775,8 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
   else
     asprintf(&xerror_bt_filename, "backtrace.%d", (int)getpid());
 
-  asprintf(&xerror_bt_command, "backtrace %d %s", (int)getpid(),
-           xerror_bt_filename);
+  asprintf(&xerror_bt_command, "backtrace -w -o %s %d",
+           xerror_bt_filename, (int)getpid());
 
   return 0;
 }

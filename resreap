@@ -108,13 +108,13 @@ def netstat(state = nil)
     tokens = line.split
     next if tokens[NS_PROTOCOL] != "tcp"
     next if state and tokens[NS_STATE] != state
-    # puts "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
+    #debug "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
     ignore = false
     $FOREIGN_IGNORES.each { |host, port|
       host2, port2 = parse_hostport(tokens[NS_FADDR])
-      #debug "comparing #{host}:#{port} with #{host2}:#{port2}"
+      debug "comparing #{host}:#{port} with #{host2}:#{port2}"
       if host == host2 and port == port2
-        #debug "ignore foreign endpoint (#{host}:#{port})"
+        debug "ignore foreign endpoint (#{host}:#{port})"
         ignore = true
         break
       end
@@ -123,40 +123,50 @@ def netstat(state = nil)
     
 
     if tokens[NS_PIDPROG] == "-"
-      addr, port = tokens[NS_LADDR].split(":")
+      addr, port = parse_hostport(tokens[NS_LADDR])
+      faddr, fport = parse_hostport(tokens[NS_FADDR])
 
+      #debug "connection #{addr}:#{port} with #{faddr}:#{fport}"
       if port
         output = `fuser -n tcp #{port} 2>/dev/null`
-        if output.split[1]
-          pid = output.split[1].to_i
+        if output.split[0]
+          pid = output.split[0].to_i
           #entry = [ addr, port, pid, commandline(pid) ]
 
           if not input[pid]
             s = Set.new
-            s.add(port)
+            #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+            s.add([addr, port, faddr, fport])
 
             input[pid] = [ s, commandline(pid) ]
           else
             #puts "input[pid][0] = #{input[pid][1]}"
             s = input[pid][0]
-            s.add(port)
+            #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+            s.add([addr, port, faddr, fport])
           end
+        else
+          debug "fuser error?: #{output}"
         end
+      else
+        debug "no port"
       end
-      next
     else
       pid, = tokens[NS_PIDPROG].split("/")
-      addr, port = tokens[NS_LADDR].split(":")
+      addr, port = parse_hostport(tokens[NS_LADDR])
+      faddr, fport = parse_hostport(tokens[NS_FADDR])
 
       if not input[pid]
         s = Set.new
-        s.add(port)
+        #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+        s.add([addr, port, faddr, fport])
 
         input[pid] = [ s, commandline(pid) ]
       else
         #puts "input[pid][0] = #{input[pid][1]}"
         s = input[pid][0]
-        s.add(port)
+        #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+        s.add([addr, port, faddr, fport])
       end
     end
   }

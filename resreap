@@ -17,7 +17,7 @@ $SIGNAL = "TERM"
 $FILTER = nil
 
 $COMMAND = nil
-$DRYRUN = true
+$DRYRUN = false
 $DEBUG = false
 
 $FOREIGN_IGNORES = []
@@ -91,6 +91,7 @@ def xkill(pid)
       return if not cmdstat
     end
 
+    log "killing process #{pid}"
     system("( kill -#{$SIGNAL} #{pid}; sleep #{$SIGWAIT}; kill -0 #{pid} && \
 echo \"process $pid didn't exit, force killing\" >> \"#{LOGFILE}\" && \
 kill -9 #{pid} )& ")

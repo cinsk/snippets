@@ -10,8 +10,11 @@ $LIMIT = 2
 LOGFILE = "/var/log/resreap.log"
 CMDLOG_DIR = "/var/log/resreap"
 PIDFILE = "/var/run/resreap.pid"
+#LOGFILE = "resreap.log"
+#CMDLOG_DIR = "resreap"
+#PIDFILE = "resreap.pid"
 
-$SIGWAIT=2
+$SIGWAIT=1
 
 $SIGNAL = "TERM"
 $FILTER = nil
@@ -94,9 +97,13 @@ def xkill(pid)
     end
 
     log "killing process #{pid}"
-    system("( kill -#{$SIGNAL} #{pid}; sleep #{$SIGWAIT}; kill -0 #{pid} && \
-echo \"process $pid didn't exit, force killing\" >> \"#{LOGFILE}\" && \
-kill -9 #{pid} )& ")
+    system("( kill -#{$SIGNAL} #{pid}; sleep #{$SIGWAIT}; \
+if kill -0 #{pid} 2>/dev/null; then \
+  echo \"process #{pid} didn't exit, force killing\" >> \"#{LOGFILE}\"; \
+  kill -9 #{pid}; \
+else \
+  echo \"process #{pid} killed\" >> \"#{LOGFILE}\";
+fi  )& ")
   else
     log "process #{pid} is not killed, dryrun: #{commandline pid}"
   end
@@ -107,12 +114,16 @@ end
 def netstat(state = nil)
   input = {}
 
-  IO.popen('netstat -t -e -n -p 2>/dev/null') { |fd|
-    fd.readlines { |line|
+  #debug "netstat:"
+
+  IO.popen('/bin/netstat -t -e -n -p 2>/dev/null') { |fd|
+    #$stderr.write("fd: #{fd}\n")
+    fd.readlines.each { |line|
+      #$stderr.write("line: #{line}\n")
       tokens = line.split
       next if tokens[NS_PROTOCOL] != "tcp"
       next if state and tokens[NS_STATE] != state
-      #debug "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
+      debug "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
       ignore = false
       $FOREIGN_IGNORES.each { |host, port|
         host2, port2 = parse_hostport(tokens[NS_FADDR])
@@ -177,6 +188,7 @@ def netstat(state = nil)
   return input
 rescue => e
   log "proc netstat failed: #{e.message}"
+  $stderr.write("proc netstat failed: #{e.message}\n")
   return ""
 end
 
@@ -314,7 +326,6 @@ while true
   begin
     sleep $INTERVAL
     $INPUT2 = netstat "CLOSE_WAIT"
-
     datecomment = true
     $INPUT2.each_pair { |pid, data|
       next if not $INPUT1[pid]

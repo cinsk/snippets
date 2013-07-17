@@ -50,10 +50,12 @@ def log(msg, trim = true)
   else
     $stderr.write("#{msg}\n")
   end
+rescue
 end
 
 def debug(msg)
   $stderr.write("#{msg}\n") if $DEBUG
+rescue
 end  
 
 def parse_hostport(s)
@@ -104,74 +106,78 @@ end
 
 def netstat(state = nil)
   input = {}
-  lines = IO.popen('netstat -t -e -n -p 2>/dev/null').readlines
-  lines.each { |line|
-    tokens = line.split
-    next if tokens[NS_PROTOCOL] != "tcp"
-    next if state and tokens[NS_STATE] != state
-    #debug "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
-    ignore = false
-    $FOREIGN_IGNORES.each { |host, port|
-      host2, port2 = parse_hostport(tokens[NS_FADDR])
-      debug "comparing #{host}:#{port} with #{host2}:#{port2}"
-      if host == host2 and port == port2
-        debug "ignore foreign endpoint (#{host}:#{port})"
-        ignore = true
-        break
-      end
-    }
-    next if ignore
-    
 
-    if tokens[NS_PIDPROG] == "-"
-      addr, port = parse_hostport(tokens[NS_LADDR])
-      faddr, fport = parse_hostport(tokens[NS_FADDR])
+  IO.popen('netstat -t -e -n -p 2>/dev/null') { |fd|
+    fd.readlines { |line|
+      tokens = line.split
+      next if tokens[NS_PROTOCOL] != "tcp"
+      next if state and tokens[NS_STATE] != state
+      #debug "port #{tokens[NS_LADDR].split(":")[1]} is in #{tokens[NS_STATE]}. added"
+      ignore = false
+      $FOREIGN_IGNORES.each { |host, port|
+        host2, port2 = parse_hostport(tokens[NS_FADDR])
+        debug "comparing #{host}:#{port} with #{host2}:#{port2}"
+        if host == host2 and port == port2
+          debug "ignore foreign endpoint (#{host}:#{port})"
+          ignore = true
+          break
+        end
+      }
+      next if ignore
 
-      #debug "connection #{addr}:#{port} with #{faddr}:#{fport}"
-      if port
-        output = `fuser -n tcp #{port} 2>/dev/null`
-        if output.split[0]
-          pid = output.split[0].to_i
-          #entry = [ addr, port, pid, commandline(pid) ]
+      if tokens[NS_PIDPROG] == "-"
+        addr, port = parse_hostport(tokens[NS_LADDR])
+        faddr, fport = parse_hostport(tokens[NS_FADDR])
 
-          if not input[pid]
-            s = Set.new
-            #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
-            s.add([addr, port, faddr, fport])
+        #debug "connection #{addr}:#{port} with #{faddr}:#{fport}"
+        if port
+          output = `fuser -n tcp #{port} 2>/dev/null`
+          if output.split[0]
+            pid = output.split[0].to_i
+            #entry = [ addr, port, pid, commandline(pid) ]
 
-            input[pid] = [ s, commandline(pid) ]
+            if not input[pid]
+              s = Set.new
+              #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+              s.add([addr, port, faddr, fport])
+
+              input[pid] = [ s, commandline(pid) ]
+            else
+              #puts "input[pid][0] = #{input[pid][1]}"
+              s = input[pid][0]
+              #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+              s.add([addr, port, faddr, fport])
+            end
           else
-            #puts "input[pid][0] = #{input[pid][1]}"
-            s = input[pid][0]
-            #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
-            s.add([addr, port, faddr, fport])
+            debug "fuser error?: #{output}"
           end
         else
-          debug "fuser error?: #{output}"
+          debug "no port"
         end
       else
-        debug "no port"
-      end
-    else
-      pid, = tokens[NS_PIDPROG].split("/")
-      addr, port = parse_hostport(tokens[NS_LADDR])
-      faddr, fport = parse_hostport(tokens[NS_FADDR])
+        pid, = tokens[NS_PIDPROG].split("/")
+        addr, port = parse_hostport(tokens[NS_LADDR])
+        faddr, fport = parse_hostport(tokens[NS_FADDR])
 
-      if not input[pid]
-        s = Set.new
-        #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
-        s.add([addr, port, faddr, fport])
+        if not input[pid]
+          s = Set.new
+          #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+          s.add([addr, port, faddr, fport])
 
-        input[pid] = [ s, commandline(pid) ]
-      else
-        #puts "input[pid][0] = #{input[pid][1]}"
-        s = input[pid][0]
-        #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
-        s.add([addr, port, faddr, fport])
+          input[pid] = [ s, commandline(pid) ]
+        else
+          #puts "input[pid][0] = #{input[pid][1]}"
+          s = input[pid][0]
+          #debug "adding [#{addr}:#{port}-#{faddr}:#{fport}]"
+          s.add([addr, port, faddr, fport])
+        end
       end
-    end
+    }
   }
   return input
+rescue => e
+  log "proc netstat failed: #{e.message}"
+  return ""
 end
 
 def help_and_exit
@@ -288,12 +294,16 @@ at_exit {
 #end
 }
 
-system("mkdir -p \"#{CMDLOG_DIR}\"")
+begin
+  system("mkdir -p \"#{CMDLOG_DIR}\" >&/dev/null")
+rescue => e
+  log "warning: #{e.message}"
+end
 
 begin
   File.open(PIDFILE, "w") { |file| file.write("#{$$}\n") }
 rescue => e
-  log "warning: can't write pidfile: #{e.message}", false
+  log "warning: can't write pidfile: #{e.message}"
 end
 
 $INPUT1 = netstat "CLOSE_WAIT"
@@ -301,34 +311,38 @@ $INPUT1 = netstat "CLOSE_WAIT"
 $FILTER = Regexp.new $FILTER if $FILTER
 
 while true
-  sleep $INTERVAL
-  $INPUT2 = netstat "CLOSE_WAIT"
+  begin
+    sleep $INTERVAL
+    $INPUT2 = netstat "CLOSE_WAIT"
 
-  datecomment = true
-  $INPUT2.each_pair { |pid, data|
-    next if not $INPUT1[pid]
+    datecomment = true
+    $INPUT2.each_pair { |pid, data|
+      next if not $INPUT1[pid]
 
-    if $FILTER and not (data[1] =~ $FILTER)
-      debug "skipped: #{data[1]}"
-      next
-    end
-
-    newset = data[0];
-    oldset = $INPUT1[pid][0];
-
-    intsect = newset & oldset
-    #debug "process(#{pid}) has #{intsect.size} connection"
-
-    if (intsect.size >= $LIMIT)
-      log "process(#{pid}) has #{intsect.size} connections"
-      debug "\tPort(s): #{intsect.to_a.join(", ")}"
-
-      if datecomment
-        log "# " + `date -u -Iseconds`.chomp
-        datecomment = false
+      if $FILTER and not (data[1] =~ $FILTER)
+        debug "skipped: #{data[1]}"
+        next
       end
-      xkill pid
-    end
-  }
-  $INPUT1 = $INPUT2
+
+      newset = data[0];
+      oldset = $INPUT1[pid][0];
+
+      intsect = newset & oldset
+      #debug "process(#{pid}) has #{intsect.size} connection"
+
+      if (intsect.size >= $LIMIT)
+        log "process(#{pid}) has #{intsect.size} connections"
+        debug "\tPort(s): #{intsect.to_a.join(", ")}"
+
+        if datecomment
+          log "# " + `date -u -Iseconds`.chomp
+          datecomment = false
+        end
+        xkill pid
+      end
+    }
+    $INPUT1 = $INPUT2
+  rescue => e
+    log "main loop exception: #{e.message}"
+  end
 end

@@ -97,6 +97,8 @@ def xkill(pid)
     end
 
     log "killing process #{pid}"
+    log "  #{commandline(pid)}"
+
     system("( kill -#{$SIGNAL} #{pid}; sleep #{$SIGWAIT}; \
 if kill -0 #{pid} 2>/dev/null; then \
   echo \"process #{pid} didn't exit, force killing\" >> \"#{LOGFILE}\"; \

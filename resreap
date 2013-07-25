@@ -25,6 +25,9 @@ $DEBUG = false
 
 $FOREIGN_IGNORES = []
 
+$OPEN_MAX = nil
+$PS_FILTER = nil
+
 NS_PROTOCOL = 0
 NS_RECVQ = 1
 NS_SENDQ = 2
@@ -84,6 +87,8 @@ def parse_hostport(s)
 end
 
 def xkill(pid)
+  return if not exist?(pid)
+
   if not $DRYRUN
     if $COMMAND
       cmdlog = `mktemp #{CMDLOG_DIR}/cmdout.#{$$}.XXXX`.chomp
@@ -112,6 +117,83 @@ fi  )& ")
 
   return true
 end
+
+
+def ps_list()
+  pids = []
+  return pids if not $PS_FILTER
+
+  IO.popen("ps #{$PS_FILTER}") { |pfd|
+    pfd.readlines().each { |line|
+      tokens = line.split()
+      next if tokens[0] == "PID"
+      pids << tokens[0].to_i
+    }
+  }
+  return pids
+end
+
+def openmax(maxspec)
+  set = Set.new()
+  return set if not maxspec
+
+  begin
+    ps_list().each { |pid|
+      #debug "openmax: dealing with #{pid}"
+      limit = fd_limit(pid)
+      count = fd_count(pid)
+      
+      next if limit < 0
+
+      ratio = count * 100.0 / limit.to_f
+
+      if maxspec[-1] == ?%.ord
+        debug "openmax: process(#{pid}) #{count}/#{limit} (#{ratio}%) >= #{maxspec.to_f}%"
+        set.add(pid) if ratio >= maxspec.to_f
+      else
+        debug "openmax: process(#{pid}) #{count}/#{limit} #{maxspec.to_i}"
+        set.add(pid) if count >= maxspec.to_i
+      end
+    }
+  rescue => e
+    debug "openmax: exception #{e.message}"
+  ensure
+    return set
+  end
+end
+
+def fd_count(pid)
+  Dir.glob("/proc/#{pid}/fd/*").size
+end
+
+def fd_limit(pid)
+  flim = 0
+  re = Regexp.new(/^Max open files *([^ ]+)/)
+  File.open("/proc/#{pid}/limits", "r") { |fd|
+    fd.readlines().each { |line|
+      m = re.match(line)
+      if m
+        flim = m[1]
+        break
+      end
+    }
+  }
+  if flim == "unlimited"
+    flim = -1
+  else
+    flim = flim.to_i
+  end
+  return flim
+end
+
+
+def exist?(pid)
+  Process.kill(0, pid.to_i)
+  true
+rescue
+  false
+end
+
 
 def netstat(state = nil)
   input = {}
@@ -199,13 +281,27 @@ def help_and_exit
 Kill processes that have enough CLOSE_WAIT socket(s)
 Usage: #{PROGRAM_NAME} [OPTION...]
 
+  CLOSE_WAIT related:
+
     -f PAT        Kill only processes whose command matches PAT
+                 
     -F HOST:PORT  Ignore if foreign endpoint matches to HOST:PORT
                   HOST should be in IPv4 numerical notation.
     
     -l N          If a process has more than or equal to N CLOSE_WAIT
                   socket(s), it will be killed with a signal
                   (default: #{$LIMIT})
+
+  Open file related:
+
+    -o OPENMAX	  Kill a process if it has more than
+                  OPENMAX open files among processes in -O filter option.
+
+    -p FILTER     Select processes from "ps FILTER" shell command.
+                  For example, to select all process with the command
+                  name XXXX, you could pass -O "-C XXXX".
+
+  General:
 
     -i N          Set sleep interval between checks in seconds
                   (default: #{$INTERVAL})
@@ -255,6 +351,8 @@ options = GetoptLong.new(
   [ '--dryrun', '-d', GetoptLong::NO_ARGUMENT ],
   [ '--debug', '-D', GetoptLong::NO_ARGUMENT ],
   [ '--foreign', '-F', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--openmax', '-o', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--psfilter', '-p', GetoptLong::REQUIRED_ARGUMENT ],
   [ '--help', '-h', GetoptLong::NO_ARGUMENT ],
   [ '--version', '-n', GetoptLong::NO_ARGUMENT ]
 )
@@ -282,11 +380,14 @@ options.each { |opt, arg|
       host, port = parse_hostport(arg)
       $FOREIGN_IGNORES << [ host, port ]
     end
-
     when '--dryrun'
     $DRYRUN = true
     when '--debug'
     $DEBUG = true
+    when '--psfilter'
+    $PS_FILTER = arg
+    when '--openmax'
+    $OPEN_MAX = arg
   end
 }
 
@@ -298,6 +399,8 @@ debug "signal: #{$SIGNAL}"
 debug "signal wait: #{$SIGWAIT}"
 debug "dryrun: #{$DRYRUN}"
 debug "debug: #{$DEBUG}"
+debug "psfilter: #{$PS_FILTER}"
+debug "openmax: #{$OPEN_MAX}"
 
 at_exit {
   #[ "INT", "HUP", "TERM", "QUIT" ].each { |sigspec|
@@ -321,13 +424,17 @@ rescue => e
 end
 
 $INPUT1 = netstat "CLOSE_WAIT"
-
+$RINPUT1 = openmax($OPEN_MAX)
+#debug "fdset1: #{$RINPUT1.to_a.join(",")}"
 $FILTER = Regexp.new $FILTER if $FILTER
 
 while true
   begin
     sleep $INTERVAL
     $INPUT2 = netstat "CLOSE_WAIT"
+    $RINPUT2 = openmax($OPEN_MAX)
+    #debug "fdset2: #{$RINPUT2.to_a.join(",")}"
+
     datecomment = true
     $INPUT2.each_pair { |pid, data|
       next if not $INPUT1[pid]
@@ -354,7 +461,17 @@ while true
         xkill pid
       end
     }
+
+    begin
+      intsect = $RINPUT1 & $RINPUT2
+      intsect.each { |pid|
+        debug "process(#{pid}) open files meet #{$OPEN_MAX}"
+        xkill pid
+      }
+    end
+
     $INPUT1 = $INPUT2
+    $RINPUT1 = $RINPUT2
   rescue => e
     log "main loop exception: #{e.message}"
   end

@@ -25,8 +25,8 @@ Usage: `basename $0` [OPTION...] PID [BACKTRACE-FILE]
   -h     show this help and exit
   -v     display version information and exit
    
-If BACKTRACE-FILE is not specified, the default filename will be
-"gdb.PID" where 'PID' is the PID of the process.
+If BACKTRACE-FILE is not specified or '-', the backtrace information goes to
+stdout.
 
 If watchdog is on (-w), this script wait for a certain amount of
 time, then ensure the GDB to terminate.  i.e.  the script will

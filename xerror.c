@@ -264,7 +264,7 @@ xerror(int status, int code, const char *format, ...)
   va_list ap;
 
   va_start(ap, format);
-  xmessage(1, code, 0, 0, format, ap);
+  xmessage(!printtid_mode, code, 0, printtid_mode, format, ap);
   va_end(ap);
 
   if (status)
@@ -341,8 +341,12 @@ xmessage(int progname, int code, int ignore, int show_tid,
       fprintf(xerror_stream, "%s: ", program_name);
   }
   else {
-    if (show_tid)
-      fprintf(xerror_stream, "t-%u: ", get_tid());
+    if (show_tid) {
+      const char *tname = xthread_get_name(errbuf, BUFSIZ);
+      if (!tname || tname[0] == '\0')
+        tname = "T";
+      fprintf(xerror_stream, "%s-%u: ", tname, get_tid());
+    }
   }
 
   vfprintf(xerror_stream, format, ap);
@@ -819,6 +823,76 @@ find_executable(const char *exe)
 
   free(path);
   return 0;
+}
+
+
+int
+xthread_set_name(const char *format, ...)
+{
+  int ret = -1;
+  va_list ap;
+  char *name;
+
+  va_start(ap, format);
+  if (vasprintf(&name, format, ap) == -1) {
+    va_end(ap);
+    return -1;
+  }
+  va_end(ap);
+
+#ifdef _PTHREAD
+#if defined(__linux__)
+  ret = pthread_setname_np(pthread_self(), name);
+  if (ret) {
+    xdebug(ret, "pthread_setname_np failed");
+    return -1;
+  }
+#elif defined(__APPLE__)
+  ret = pthread_setname_np(name);
+  if (ret) {
+    xdebug(ret, "pthread_setname_np failed");
+    return -1;
+  }
+#else
+
+#endif
+#endif  /* _PTHREAD */
+
+  free(name);
+  return ret;
+}
+
+
+const char *
+xthread_get_name(char *buf, size_t sz)
+{
+  int ret;
+
+#ifdef _PTHREAD
+#if defined(__linux__)
+  // if buffer size is not enough large to hold the thread name,
+  // pthread_getname_np() returns ERANGE.
+  assert(sz > 0);
+  ret = pthread_getname_np(pthread_self(), buf, sz);
+  if (ret) {
+    xdebug(ret, "pthread_getname_np failed");
+    buf[0] = '\0';
+    return buf;
+  }
+  return buf;
+#elif defined(__APPLE__)
+  assert(sz > 0);
+  ret = pthread_getname_np(pthread_self(), buf, sz);
+  if (ret) {
+    xdebug(ret, "pthread_getname_np failed");
+    buf[0] = '\0';
+    return buf;
+  }
+  return buf;
+#endif
+#endif  /* _PTHREAD */
+
+  return "";
 }
 
 

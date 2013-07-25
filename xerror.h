@@ -66,6 +66,9 @@ extern const char *xbacktrace_executable;
  */
 extern int xerror_init(const char *program_name, const char *ignore_search_dir);
 
+extern int xthread_set_name(const char *name, ...);
+extern const char *xthread_get_name(char *buf, size_t sz);
+
 /*
  * xerror() is the same as error() in GLIBC.
  */

@@ -204,11 +204,24 @@ xbacktrace_on_signals(int signo, ...)
 #ifdef USE_ALTSTACK
   stack_t ss;
 #endif
-
+  char *file = getenv("XBACKTRACE_FILE");
   int ret = 0;
 
   if (getenv("XBACKTRACE") == 0)
     return 0;
+
+  free(xerror_bt_filename);
+  free(xerror_bt_command);
+
+  if (file) {
+    asprintf(&xerror_bt_filename, "%s.%d", file, (int)getpid());
+    xerror_bt_filep = 1;
+  }
+  else
+    asprintf(&xerror_bt_filename, "backtrace.%d", (int)getpid());
+
+  asprintf(&xerror_bt_command, "backtrace -w -o %s %d",
+           xerror_bt_filename, (int)getpid());
 
 #ifdef USE_ALTSTACK
   /* Why uses SIGSTKSZ * 2? -- Don't know why, but segfault.c in glibc
@@ -738,7 +751,6 @@ get_tid(void)
 int
 xerror_init(const char *prog_name, const char *ignore_search_dir)
 {
-  char *file = getenv("XBACKTRACE_FILE");
   char *debug = getenv("XDEBUG");
   char *thread = getenv("XDEBUG_THREAD");
 
@@ -771,16 +783,6 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
 #endif  /* _PTHREAD */
 
   xerror_redirect(stderr);
-
-  if (file) {
-    asprintf(&xerror_bt_filename, "%s.%d", file, (int)getpid());
-    xerror_bt_filep = 1;
-  }
-  else
-    asprintf(&xerror_bt_filename, "backtrace.%d", (int)getpid());
-
-  asprintf(&xerror_bt_command, "backtrace -w -o %s %d",
-           xerror_bt_filename, (int)getpid());
 
   return 0;
 }
@@ -929,6 +931,8 @@ int
 main(int argc, char *argv[])
 {
   xerror_init(0, 0);
+
+  daemon(1, 1);
 
   xbacktrace_on_signals(SIGSEGV, SIGILL, SIGFPE, SIGBUS, 0);
 

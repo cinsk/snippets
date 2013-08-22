@@ -1,14 +1,18 @@
 #!/usr/bin/env ruby
 # -*-ruby-*-
 
+require 'rubygems'
 require 'set'
 require 'getoptlong'
+require 'hiredis'
+require 'redis'
+require 'socket'
 
 $INTERVAL = 2
 $LIMIT = 2
 
-LOGFILE = "/var/log/resreap.log"
-CMDLOG_DIR = "/var/log/resreap"
+LOGFILE = "/mnt/svoice/log/resreap.log"
+CMDLOG_DIR = "/mnt/svoice/log/resreap"
 PIDFILE = "/var/run/resreap.pid"
 #LOGFILE = "resreap.log"
 #CMDLOG_DIR = "resreap"
@@ -27,6 +31,8 @@ $FOREIGN_IGNORES = []
 
 $OPEN_MAX = nil
 $PS_FILTER = nil
+
+$REDIS_ENDPOINTS = []
 
 NS_PROTOCOL = 0
 NS_RECVQ = 1
@@ -64,7 +70,7 @@ def debug(msg)
 rescue
 end  
 
-def parse_hostport(s)
+def parse_hostport(s, default_port = 6379)
   ipv6 = true if s.count(":") > 1
 
   if ipv6
@@ -83,6 +89,8 @@ def parse_hostport(s)
     host, port = s.split(":")
     port = port.to_i
   end
+
+  port = default_port if port == 0
   return [ host, port ]
 end
 
@@ -276,6 +284,64 @@ rescue => e
   return ""
 end
 
+
+def process_kill
+  local_hostname = Socket.gethostname
+
+  begin
+    host, port = $REDIS_ENDPOINTS.shift
+    $REDIS_ENDPOINTS.push([host, port])
+    redis = Redis.new(:driver => :hiredis, 
+                      :host => host, :port => port.to_i)
+
+    redis.subscribe(:kill) { |on|
+      on.subscribe { |channel, subscriptions|
+        debug "Subscribed to ##{channel} (#{subscriptions} subscriptions)"
+      }
+
+      on.message { |channel, message|
+        debug "##{channel}: #{message}"
+        redis.unsubscribe if message == "exit"
+
+        # int QWER(output-MAP, input1, input2, input-MAP)
+        tokens = message.split
+        if tokens.length > 2
+          # tokens[0] = host
+          # tokens[1] = port
+          name = tokens[0]
+          host = tokens[1]
+          port = tokens[2]
+
+          if local_hostname == host
+            output = `fuser -n tcp #{port} 2>/dev/null`
+            if output.empty?
+              log "warning: there is no process associated with port #{port}"
+            elsif output.split[0]
+              pid = output.split[0].to_i
+              log "KILL receives for #{name}/#{host} TCP port #{port}"
+              xkill pid
+            end
+          end
+        end
+      }
+
+      on.unsubscribe { |channel, subscriptions|
+        debug "Unsubscribed from ##{channel} (#{subscriptions} subscriptions)"
+      }
+    }
+
+  rescue Redis::BaseConnectionError => error
+    log "warning: #{error}"
+    sleep 3
+    retry
+  rescue => error
+    log "warning: #{error}"
+    sleep 3
+    retry
+  end
+end
+
+
 def help_and_exit
   msg = <<END
 Kill processes that have enough CLOSE_WAIT socket(s)
@@ -353,6 +419,7 @@ options = GetoptLong.new(
   [ '--foreign', '-F', GetoptLong::REQUIRED_ARGUMENT ],
   [ '--openmax', '-o', GetoptLong::REQUIRED_ARGUMENT ],
   [ '--psfilter', '-p', GetoptLong::REQUIRED_ARGUMENT ],
+  [ '--redis', '-r', GetoptLong::REQUIRED_ARGUMENT ],
   [ '--help', '-h', GetoptLong::NO_ARGUMENT ],
   [ '--version', '-n', GetoptLong::NO_ARGUMENT ]
 )
@@ -379,6 +446,12 @@ options.each { |opt, arg|
     begin
       host, port = parse_hostport(arg)
       $FOREIGN_IGNORES << [ host, port ]
+    end
+    when '--redis'
+    begin
+      host, port = parse_hostport(arg, 6379)
+      $REDIS_ENDPOINTS.push([host, port])
+      debug "REDIS: adding endpoint #{host}:#{port}"
     end
     when '--dryrun'
     $DRYRUN = true
@@ -427,6 +500,15 @@ $INPUT1 = netstat "CLOSE_WAIT"
 $RINPUT1 = openmax($OPEN_MAX)
 #debug "fdset1: #{$RINPUT1.to_a.join(",")}"
 $FILTER = Regexp.new $FILTER if $FILTER
+
+if $REDIS_ENDPOINTS.length > 0
+  debug "starting kill subscription thread"
+  $THREAD_KILL = Thread.new {
+    process_kill
+  }
+else
+  debug "warning: no kill subscription"
+end
 
 while true
   begin

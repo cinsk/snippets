@@ -166,6 +166,14 @@ trap "rm -f \"$TMPFILE\" \"$BTTMP\" \"$WATMP\" \"$CATMP\"; exit 1" \
 #
 
 if [ "$WATCHDOG" -ne 0 ]; then
+    major=$(echo $BASH_VERSION | sed -e 's/\..*//g')
+    if [ -z "$major" -o "$major" -le 4 ]; then
+        echo "warning: watchdog disabled (need bash version 4.0 or higher)" 1>&2
+        WATCHDOG=0
+    fi
+fi
+
+if [ "$WATCHDOG" -ne 0 ]; then
     debug "run COPROC gdb ..."
     coproc gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP
     #set | grep COPROC

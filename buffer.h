@@ -75,14 +75,42 @@ BUFFER *buf_open(void *data, size_t size, int flags);
 
 void buf_close(BUFFER *bp);
 
+/*
+ * Write(put) a string (without the trailing null character) into the
+ * BUFFER, BP.
+ *
+ * If writing was successful, this function returns a number of
+ * written characters (without the trailing null character).  If the
+ * buffer does not have enough space, this function will return
+ * -(number of written characters).  Note that zero return also
+ * means  that insufficient space if you tried non-zero character writing.
+ *
+ * Note that when the writing was not successful, the buffer content
+ * may not be null-terminated.
+ */
 int buf_vprintf(BUFFER *bp, const char *format, va_list ap);
+
 int buf_printf(BUFFER *bp, const char *format, ...)
   __attribute__ ((format (printf, 2, 3)));
 
 void buf_flip(BUFFER *bp);
 int buf_seek(BUFFER *bp, long offset, int whence);
 long buf_tell(BUFFER *bp);
+
+/*
+ * Make that the content of the buffer, BP is null-terminated string.
+ *
+ * This function will write null-character ('\0') into the buffer,
+ * which is not part of the content.  So, subsequent call to the
+ * buffer writing function/macro will overwrite the null-character.
+ *
+ * If the buffer, BP is not growable and there is no enough space
+ * (just 1 byte), the buf_flush() will fail.
+ *
+ * On success, this function returns zero, otherwise returns -1.
+ */
 int buf_flush(BUFFER *bp);
+
 void buf_mark(BUFFER *bp);
 int buf_reset(BUFFER *bp);
 
@@ -181,7 +209,7 @@ buf_puts(const char *s, BUFFER *bp)
 {
   size_t len = strlen(s);
 
-  buf_grow(bp, len + 1);
+  buf_grow(bp, len + 1);        /* 1 for null character */
 
   if (bp->pos + len < bp->end) {
     strcpy(bp->pos, s);
@@ -231,5 +259,13 @@ char *buf_substring(BUFFER *bp, off_t start, off_t end);
  */
 #define buf_position(bp)        ((bp)->pos)
 
+/*
+ * Returns the available number of byte(s) that can be safely written
+ * without reallocating the memory chunk.  If the buffer, BP is not
+ * growable, its return value actually represents the number of
+ * available byte(s) for writing.  Otherwise, the return value has
+ * less importance, since the buffer will grow if needed.
+ */
+#define buf_available(bp)       ((bp)->end - (bp)->pos)
 
 #endif  /* BUFFER_H__ */

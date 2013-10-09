@@ -72,7 +72,7 @@ buf_flip(BUFFER *bp)
   bp->pos = bp->data;
   bp->mark = NULL;
 
-  bp->lim = '\0';
+  //*bp->lim = '\0';
 }
 
 
@@ -146,7 +146,16 @@ buf_vprintf(BUFFER *bp, const char *format, va_list ap)
   avail = bp->end - bp->pos;
 
   written = vsnprintf(bp->pos, avail, format, ap);
-  bp->pos += written;
+  if (written >= avail) {       /* truncated */
+    bp->pos += avail;
+    return -avail;
+  }
+  else if (written >= 0)
+    bp->pos += written;
+  else {
+    /* can't happend;  vsnprintf() cannot return a negative value */
+    abort();
+  }
 
   /* TODO: Do I need to make null-terminated string? */
   if (written < avail)
@@ -248,6 +257,38 @@ buf_getc(BUFFER *bp)
     return *bp->pos++;
   else
     return EOF;
+}
+
+
+char *
+buf_gets(char *s, int size, BUFFER *bp)
+{
+  size_t lim;
+  char *p;
+
+  /* TODO: not tested! */
+  assert(bp->pos <= bp->lim);
+
+  if (bp->pos >= bp->lim)
+    return NULL;
+
+  lim = bp->lim - bp->pos;
+  if (lim > size - 1)
+    lim = size - 1;
+
+  p = memchr(bp->pos, '\n', lim);
+
+  if (p) {
+    memcpy(s, bp->pos, p - bp->pos + 1);
+    s[p - bp->pos + 1 + 1] = '\0';
+    bp->pos = p + 1;
+  }
+  else {                        /* no new line */
+    memcpy(s, bp->pos, lim);
+    s[lim] = '\0';
+    bp->pos += lim;
+  }
+  return s;
 }
 
 
@@ -356,7 +397,33 @@ int
 main(int argc, char *argv[])
 {
   BUFFER *bp;
-  int ch;
+  int i, ch, ret;
+  char long_string[] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  char *chunk = malloc(10);
+
+
+  bp = buf_open(chunk, 10, 0);
+
+  for (i = 0; i < 10; i++) {
+    ret = buf_printf(bp, "%08x\n", i);
+    printf("writing %08x, got return value, %d\n", i, ret);
+  }
+
+  buf_clear(bp);
+
+  for (i = 0; i < 11; i++) {
+    ret = buf_putc('a' + i, bp);
+    printf("writing %c, got return value, %d\n", 'a' + i, ret);
+  }
+
+  buf_clear(bp);
+
+  ret = buf_puts(long_string, bp);
+  printf("writing long string, got return value, %d\n", ret);
+  ret = buf_puts(long_string, bp);
+  printf("writing long string, got return value, %d\n", ret);
+
+  buf_close(bp);
 
   bp = buf_new();
 
@@ -386,6 +453,17 @@ main(int argc, char *argv[])
     r = buf_scanf(bp, "%d", &i);
 
     printf("i = %d, r = %d\n", i, r);
+  }
+
+  buf_clear(bp);
+  buf_puts("hello\n", bp);
+  buf_puts("there\n", bp);
+  buf_puts("world\n", bp);
+  buf_flip(bp);
+  {
+    char line[4];
+    while (buf_gets(line, 4, bp) != 0)
+      printf("%s", line);
   }
 
   buf_close(bp);

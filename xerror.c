@@ -435,7 +435,7 @@ long2str(char *buf, size_t bufsize, long l, int base)
   char nbuf[NUMBUF_MAX];                                 \
   char *n;                                               \
   n = long2str(nbuf, NUMBUF_MAX, (num), (base));         \
-  write((fd), n, strlen(n));                             \
+  if (n) write((fd), n, strlen(n));                      \
   } while (0)
 
 #define WRITE_STR(fd, s)        write((fd), (s), strlen(s))
@@ -776,6 +776,7 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
 #ifdef _PTHREAD
   {
     pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
     pthread_mutex_init(&xerror_mutex, &attr);
     pthread_mutexattr_destroy(&attr);

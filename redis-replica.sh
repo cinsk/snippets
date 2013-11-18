@@ -245,7 +245,7 @@ function create_sentinel_conf() {
             master="master0"
             cat >"$nodeconf" <<EOF
 sentinel monitor $master 127.0.0.1 $REDIS_BASE_PORT $SENTINELS
-sentinel down-after-milliseconds $master 1000
+sentinel down-after-milliseconds $master 5000
 sentinel failover-timeout $master 600000
 sentinel can-failover $master yes
 sentinel parallel-syncs $master 1
@@ -263,67 +263,104 @@ function session_alive() {
     fi
 }
 
+
+function wait4ping() {
+    local host port
+    host=$1
+    port=$2
+    echo -e "Waiting for $host:$port to respond..."
+    while true; do
+        redis-cli -h "$host" -p "$port" PING 2>/dev/null
+        if [ "$?" -eq 0 ]; then
+            break
+        fi
+        sleep 0.5
+    done
+}
+
+
 function create_session() {
     if ! session_alive; then
-        window=0
         $SCREEN -dmS $SCREEN_SESSION
 
-        nodebase=$REDIS_ROOT/0
-        nodeconf=$nodebase/redis.conf
-        $SCREEN -r $SCREEN_SESSION -p $window -X title "MASTER:$REDIS_BASE_PORT"
-        $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_SERVER ${nodeconf}${crlf}"
 
-        $SCREEN -r $SCREEN_SESSION -X screen
-        window=$((window + 1))
-        $SCREEN -r $SCREEN_SESSION -p $window -X title "MASTER-MONITOR:$REDIS_BASE_PORT"
-        $SCREEN -r $SCREEN_SESSION -p $window -X stuff "sleep 1; $REDIS_CLI -p $REDIS_BASE_PORT MONITOR${crlf}"
-
-        $SCREEN -r $SCREEN_SESSION -X screen
-        window=$((window + 1))
-        $SCREEN -r $SCREEN_SESSION -p $window -X title "MASTER-CLIENT:$REDIS_BASE_PORT"
-        $SCREEN -r $SCREEN_SESSION -p $window -X stuff "sleep 1; $REDIS_CLI -p $REDIS_BASE_PORT ${crlf}"
-
-
-        port=$REDIS_BASE_PORT
-        for f in `seq 1 $REDIS_SLAVES`; do
-            nodebase=$REDIS_ROOT/$f
-            nodeconf=$nodebase/redis.conf
-            
+        for f in `seq $(((1 + REDIS_SLAVES + SENTINELS) * 3))`; do
             $SCREEN -r $SCREEN_SESSION -X screen
-            window=$((window + 1))
-            $SCREEN -r $SCREEN_SESSION -p $window -X title "SLAVE#$f:$((port + f))"
-            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_SERVER ${nodeconf}${crlf}"
-
-            $SCREEN -r $SCREEN_SESSION -X screen
-            window=$((window + 1))
-            $SCREEN -r $SCREEN_SESSION -p $window -X title "SLAVE#$f-MONITOR:$((port + f))"
-            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "sleep 1; $REDIS_CLI -p $((f + REDIS_BASE_PORT)) MONITOR${crlf}"
-
-            $SCREEN -r $SCREEN_SESSION -X screen
-            window=$((window + 1))
-            $SCREEN -r $SCREEN_SESSION -p $window -X title "SLAVE#$f-CLIENT:$((port + f))"
-            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "sleep 1; $REDIS_CLI -p $((f + REDIS_BASE_PORT))${crlf}"
         done
+
+        window=0
 
         port=$SENTINEL_BASE_PORT
         for f in `seq 1 $SENTINELS`; do
             nodebase=$SENTINEL_ROOT/$f
             nodeconf=$nodebase/sentinel.conf
 
-            $SCREEN -r $SCREEN_SESSION -X screen
-            window=$((window + 1))
+            echo "Launching sentinel#$f..."
+            #$SCREEN -r $SCREEN_SESSION -X screen
             $SCREEN -r $SCREEN_SESSION -p $window -X title "SENTINEL#$f:$((port + f - 1))"
             $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_SENTINEL ${nodeconf} --port $((port + f - 1)) ${crlf}"
-
-            $SCREEN -r $SCREEN_SESSION -X screen
             window=$((window + 1))
+
+            wait4ping 127.0.0.1 $((port + f - 1))
+
+            #$SCREEN -r $SCREEN_SESSION -X screen
             $SCREEN -r $SCREEN_SESSION -p $window -X title "SENTINEL#$f-MONITOR:$((port + f - 1))"
-            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "sleep 1; $REDIS_CLI -p $((port + f - 1)) PSUBSCRIBE '*' ${crlf}"
-
-            $SCREEN -r $SCREEN_SESSION -X screen
+            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_CLI -p $((port + f - 1)) PSUBSCRIBE '*' ${crlf}"
             window=$((window + 1))
+
+            #$SCREEN -r $SCREEN_SESSION -X screen
             $SCREEN -r $SCREEN_SESSION -p $window -X title "SENTINEL#$f-CLIENT:$((port + f - 1))"
-            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "sleep 1; $REDIS_CLI -p $((port + f - 1))${crlf}"
+            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_CLI -p $((port + f - 1))${crlf}"
+            window=$((window + 1))
+        done
+
+        #sleep 1
+
+        nodebase=$REDIS_ROOT/0
+        nodeconf=$nodebase/redis.conf
+
+        echo "Launching master redis server..."
+        #$SCREEN -r $SCREEN_SESSION -X screen
+        $SCREEN -r $SCREEN_SESSION -p $window -X title "MASTER:$REDIS_BASE_PORT"
+        $SCREEN -r $SCREEN_SESSION -p $window -X stuff "redis_join -m -e 127.0.0.1:$SENTINEL_BASE_PORT master0 ${nodeconf}${crlf}"
+        window=$((window + 1))
+
+        wait4ping 127.0.0.1 $REDIS_BASE_PORT
+
+        #$SCREEN -r $SCREEN_SESSION -X screen
+        $SCREEN -r $SCREEN_SESSION -p $window -X title "MASTER-MONITOR:$REDIS_BASE_PORT"
+        $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_CLI -p $REDIS_BASE_PORT MONITOR${crlf}"
+        window=$((window + 1))
+
+        #$SCREEN -r $SCREEN_SESSION -X screen
+        $SCREEN -r $SCREEN_SESSION -p $window -X title "MASTER-CLIENT:$REDIS_BASE_PORT"
+        $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_CLI -p $REDIS_BASE_PORT ${crlf}"
+        window=$((window + 1))
+
+        #sleep 1
+
+        port=$REDIS_BASE_PORT
+        for f in `seq 1 $REDIS_SLAVES`; do
+            nodebase=$REDIS_ROOT/$f
+            nodeconf=$nodebase/redis.conf
+
+            echo "Launching slave#$f redis server..."
+            #$SCREEN -r $SCREEN_SESSION -X screen
+            $SCREEN -r $SCREEN_SESSION -p $window -X title "SLAVE#$f:$((port + f))"
+            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "redis_join -e 127.0.0.1:$SENTINEL_BASE_PORT master0 ${nodeconf}${crlf}"
+            window=$((window + 1))
+
+            wait4ping 127.0.0.1 $((port + f))
+
+            #$SCREEN -r $SCREEN_SESSION -X screen
+            $SCREEN -r $SCREEN_SESSION -p $window -X title "SLAVE#$f-MONITOR:$((port + f))"
+            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_CLI -p $((port + f)) MONITOR${crlf}"
+            window=$((window + 1))
+
+            #$SCREEN -r $SCREEN_SESSION -X screen
+            $SCREEN -r $SCREEN_SESSION -p $window -X title "SLAVE#$f-CLIENT:$((port + f))"
+            $SCREEN -r $SCREEN_SESSION -p $window -X stuff "$REDIS_CLI -p $((port + f))${crlf}"
+            window=$((window + 1))
         done
 
         return 0
@@ -340,3 +377,5 @@ create_sentinel_conf
 
 
 create_session
+
+echo "Run 'screen -dr redis' to attach the screen"

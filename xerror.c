@@ -98,15 +98,14 @@ static void xerror_finalize(void) __attribute__((destructor));
 static char *find_executable(const char *exe);
 
 
-FILE *
-xerror_redirect(FILE *fp)
+static __inline__ FILE *
+xerror_redirect_unlocked(FILE *fp)
 {
   FILE *old = xerror_stream;
   sigset_t set, oldset;
 
   assert(fp != NULL);
 
-  LOCK();
   {
     if (old == (FILE *)-1)
       old = NULL;
@@ -156,8 +155,6 @@ xerror_redirect(FILE *fp)
   sigprocmask(SIG_SETMASK, &oldset, 0);
 #endif
 
-  UNLOCK();
-
   if (old) {
     __sync_synchronize();       /* is this necessary? */
     funlockfile(old);
@@ -165,6 +162,19 @@ xerror_redirect(FILE *fp)
 
   return old;
 }
+
+
+FILE *
+xerror_redirect(FILE *fp)
+{
+  FILE *ret;
+  LOCK();
+  ret = xerror_redirect_unlocked(fp);
+  UNLOCK();
+  return ret;
+}
+
+
 
 
 #ifdef __APPLE__
@@ -336,7 +346,7 @@ xmessage(int progname, int code, int ignore, int show_tid,
 
   if (xerror_stream == (FILE *)-1) {
     if (stderr != NULL)
-      xerror_redirect(stderr);
+      xerror_redirect_unlocked(stderr);
     else
       goto fin;
   }

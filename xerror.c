@@ -113,7 +113,6 @@ xerror_redirect_unlocked(FILE *fp)
       fflush(old);
 
     if (xerror_stream == fp) {
-      UNLOCK();
       return 0;
     }
   }

@@ -175,8 +175,8 @@ fi
 
 if [ "$WATCHDOG" -ne 0 ]; then
     debug "run COPROC gdb ..."
-    #coproc gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP
-    coproc sleep 10 </dev/null &> $BTTMP
+    coproc gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP
+    #coproc ./gdb.sh </dev/null &> $BTTMP
     #set | grep COPROC
 else
     gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP

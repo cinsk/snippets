@@ -7,7 +7,7 @@
 exec 1>&2
 
 TIMEOUT=5
-#DEBUG=1
+DEBUG=1
 
 WATCHDOG=0
 VERSION=0.2
@@ -167,7 +167,7 @@ trap "rm -f \"$TMPFILE\" \"$BTTMP\" \"$WATMP\" \"$CATMP\"; exit 1" \
 
 if [ "$WATCHDOG" -ne 0 ]; then
     major=$(echo $BASH_VERSION | sed -e 's/\..*//g')
-    if [ -z "$major" -o "$major" -le 4 ]; then
+    if [ -z "$major" -o "$major" -lt 4 ]; then
         echo "warning: watchdog disabled (need bash version 4.0 or higher)" 1>&2
         WATCHDOG=0
     fi
@@ -175,7 +175,8 @@ fi
 
 if [ "$WATCHDOG" -ne 0 ]; then
     debug "run COPROC gdb ..."
-    coproc gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP
+    #coproc gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP
+    coproc sleep 10 </dev/null &> $BTTMP
     #set | grep COPROC
 else
     gdb --batch -x $TMPFILE --pid $PID </dev/null &> $BTTMP

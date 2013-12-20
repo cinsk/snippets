@@ -42,7 +42,7 @@ def debug(message):
 def set_debug_file(pathname):
     global DEBUG_FD
     DEBUG_FD = open(pathname, "w")
-    
+
 def cmd_dump(filename, args, format="binary", type="value"):
     cmd = "dump %s %s %s %s" % (format, type, filename, args)
     debug("cmd_dump: executing '%s'..." % cmd )
@@ -70,7 +70,7 @@ On invalid encoding name, it returns False.  Otherwise returns True."""
         debug("locale encoding (LC_CTYPE): %s" % encoding)
         if encoding:
             encoding = encoding.upper()
-        
+
     if encoding != None and defenc != encoding and \
        defenc.find(encoding) < 0 and encoding.find(defenc) < 0:
         # If the new encoding 'encoding' is different from the default
@@ -85,7 +85,7 @@ On invalid encoding name, it returns False.  Otherwise returns True."""
     else:
         debug("Default encoding is %s" % defenc)
 
-    
+
 class GdbDumpParent(gdb.Command):
     def __init__(self, name, completer = -1, prefix = False):
         gdb.Command.__init__(self, name, gdb.COMMAND_DATA, completer, prefix)
@@ -112,7 +112,7 @@ The return value should be in either a string value or a list contains
 one or more string values."""
 
         return []
-    
+
     def execute(self, filename, args):
         cmdline = self.commandline(filename, args)
         if type(cmdline) != list:
@@ -139,7 +139,7 @@ one or more string values."""
 
     def on_execute_error(self):
         pass
-    
+
     def invoke(self, args, from_tty):
         with tempfile.NamedTemporaryFile(prefix="gdb-") as tmp:
         #tmp = tempfile.NamedTemporaryFile(prefix="gdb-")
@@ -156,14 +156,14 @@ one or more string values."""
             except:
                 sys.stderr.write("error: an exception occurred during excution")
                 raise
-            
+
 class GdbDumpValueParent(GdbDumpParent):
     def __init__(self, name, completer = -1, prefix = False):
         GdbDumpParent.__init__(self, name, completer, prefix)
 
     def dump(self, filename, args):
         cmd_dump(filename, args, format="binary", type="value")
-        
+
 class GdbDumpMemoryParent(GdbDumpParent):
     def __init__(self, name, completer = -1, prefix = False):
         GdbDumpParent.__init__(self, name, completer, prefix)
@@ -198,7 +198,7 @@ class HexdumpImpl(object):
             return gdb.COMPLETE_SYMBOL
         else:
             return gdb.COMPELTE_NONE
-        
+
 class HexdumpValueCommand(GdbDumpValueParent):
     """Dump the value EXPR using hexdump(1)
 
@@ -220,16 +220,16 @@ To dump the value, 'buffer' in one-byte octal display:
     def __init__(self):
         GdbDumpValueParent.__init__(self, "hexdump value", -1)
         self.impl = HexdumpImpl()
-        
+
     def parse_arguments(self, args):
         return self.impl.parse_argument(args)
-    
+
     def commandline(self, filename, args):
         return self.impl.commandline(filename, args)
 
     def complete(self, text, word):
         return self.impl.complete(text, word)
-        
+
 class HexdumpMemoryCommand(GdbDumpMemoryParent):
     """Dump the memory using hexdump(1)
 
@@ -252,16 +252,16 @@ To dump the value, 'buffer' in one-byte octal display:
     def __init__(self):
         GdbDumpMemoryParent.__init__(self, "hexdump memory", -1)
         self.impl = HexdumpImpl()
-        
+
     def parse_arguments(self, args):
         return self.impl.parse_argument(args)
-    
+
     def commandline(self, filename, args):
         return self.impl.commandline(filename, args)
 
     def complete(self, text, word):
         return self.impl.complete(text, word)
-        
+
 HexdumpCommand()
 HexdumpValueCommand()
 HexdumpMemoryCommand()
@@ -275,14 +275,18 @@ class IconvCommand(gdb.Command):
 class IconvEncodings(object):
     encodings = None
     replaces = "./:-()"
-    
+
     @staticmethod
     def supported_encodings():
         ret = dict()
         try:
             p = subprocess.Popen([ICONV_PATH, "-l"], stdout=subprocess.PIPE)
             outbuf = p.communicate()[0]
-            enclist = outbuf.split("\n")
+            if sys.version_info[0] <= 2:
+                enclist = outbuf.split("\n")
+            else:
+                enclist = outbuf.decode("utf-8").split("\n")
+                
             for enc in enclist:
                 # 'enc' is something like "ANSI_X3.110-1983//"
                 enc = enc.rstrip("/")
@@ -290,19 +294,19 @@ class IconvEncodings(object):
 
                 for repl in IconvEncodings.replaces:
                     alias = alias.replace(repl, "_")
-                
+
                 ret[alias] = enc
         except:
             print "error: cannot get supported encoding list"
             raise
-        
+
         return ret
 
     def __init__(self):
         if IconvEncodings.encodings == None:
             IconvEncodings.encodings = IconvEncodings.supported_encodings()
             reload(sys)
-            
+
     def name(self, alias):
         """Return the actual encoding name if exists, otherwise None"""
         alias = alias.lstrip("#")
@@ -320,7 +324,7 @@ class IconvEncodings(object):
             if a.find(word) == 0:
                 ret.append(a)
         return ret
-        
+
 class IconvEncodingCommand(gdb.Command):
     """Set/get the current character encoding
 
@@ -334,11 +338,11 @@ given data into ENCODING.
 
 Note that this changes the internal 'system default encoding' in
 Python runtime."""
-    
+
     def __init__(self):
         gdb.Command.__init__(self, "iconv encoding", gdb.COMMAND_DATA, -1)
         self.encodings = IconvEncodings()
-        
+
     def invoke(self, arg, from_tty):
         arg = arg.strip()
         debug("arg: '%s'" % arg)
@@ -356,12 +360,12 @@ Python runtime."""
     def complete(self, text, word):
         debug("iconv encoding complete: text(%s) word(%s)" % (text, word))
         return self.encodings.complete(text, word)
-        
+
 class IconvImpl(object):
     def __init__(self):
         self.re_encoding = re.compile(r"([ ]*(#[a-z0-9_]+))+")
         self.encodings = IconvEncodings()
-        
+
     def partition(self, args):
         m = self.re_encoding.search(args)
         if m == None:
@@ -369,7 +373,7 @@ class IconvImpl(object):
         else:
             idx = m.start()
             return (args[:idx], args[idx:])
-            
+
     def format_error(self, errbuf):
         """Format iconv(1)-related error message
 
@@ -378,7 +382,7 @@ Currently, capture the only first line, removing iconv pathname"""
         idx = msg.find("iconv: ")
         if idx >= 0:
             return msg[idx:]
-        
+
     def execute_iconv(self, filename, args):
         debug("execute_iconv('%s', '%s')" % (filename, args))
         encodings = list()
@@ -389,13 +393,13 @@ Currently, capture the only first line, removing iconv pathname"""
                 encodings.append(realname)
             else:
                 error("unknown encoding alias %s, ignored" % e)
-                
+
         target = sys.getdefaultencoding()
 
         width = max(map(len, encodings))
 
         sys.stdout.write("Target encoding is %s:\n" % target)
-        
+
         for enc in encodings:
             cmdline = [ICONV_PATH, "-t", target, "-f", enc, filename]
             debug("cmdline: %s" % cmdline)
@@ -415,7 +419,7 @@ Currently, capture the only first line, removing iconv pathname"""
             if err != "":
                 sys.stdout.write("\t%s\n" % self.format_error(err))
         return True
-        
+
     def complete_any(self, text, word):
         try:
             prevchar = text[-(len(word) + 1)]
@@ -429,7 +433,7 @@ Currently, capture the only first line, removing iconv pathname"""
         else:
             debug("complete for symbol...")
             return gdb.COMPLETE_SYMBOL
-        
+
 class IconvValueCommand(GdbDumpValueParent, IconvImpl):
     """Check the encoding of the value EXPR.
 
@@ -462,7 +466,7 @@ may try following:
 Then it will try three times for the encoding 'EUC-KR', 'CP949', and
 'UTF-8'."""
     # iconv value EXPR #ENCODING...
-    
+
     def __init__(self):
         GdbDumpValueParent.__init__(self, "iconv value", -1)
         IconvImpl.__init__(self)
@@ -472,10 +476,10 @@ Then it will try three times for the encoding 'EUC-KR', 'CP949', and
 
     def execute(self, filename, args):
         return self.execute_iconv(filename, args)
-    
+
     def parse_arguments(self, args):
         return self.partition(args)
-        
+
 class IconvMemoryCommand(GdbDumpMemoryParent, IconvImpl):
     """Check the encoding of the memory.
 
@@ -508,7 +512,7 @@ the exact encoding, you may try following:
 Then it will try three times for the encoding 'EUC-KR', 'CP949', and
 'UTF-8'."""
     # iconv value EXPR #ENCODING...
-    
+
     def __init__(self):
         GdbDumpMemoryParent.__init__(self, "iconv memory", -1)
         IconvImpl.__init__(self)
@@ -518,7 +522,7 @@ Then it will try three times for the encoding 'EUC-KR', 'CP949', and
 
     def execute(self, filename, args):
         return self.execute_iconv(filename, args)
-    
+
     def parse_arguments(self, args):
         r = self.partition(args)
         debug("parse_argument: partition: %s" % repr(r))
@@ -535,7 +539,7 @@ class XmllintImpl(object):
             return gdb.COMPLETE_SYMBOL
         else:
             return gdb.COMPLETE_NONE
-        
+
     def partition(self, args):
         idx = args.rfind("##")
         if idx < 0:
@@ -546,7 +550,7 @@ class XmllintImpl(object):
     def commandline(self, filename, args):
         # args is something like '--format --schema http://asdfadf --debug'
         return "%s %s %s" % (XMLLINT_PATH, args, filename)
-        
+
 class XmllintValueCommand(GdbDumpValueParent):
     """Check the value of an expression as a full XML document
 
@@ -561,17 +565,17 @@ EXPR using '##'.
 To validate 'xml_buffer', just use:
 
     (gdb) xmllint value xml_buffer
-    
+
 To validate 'xml_buffer' and to indent for human-readability:
-    
+
     (gdb) xmllint value xml_buffer ## --format
 """
     def __init__(self):
         # xmllint value EXPR ## OPTIONS...
-        
+
         GdbDumpValueParent.__init__(self, "xmllint value", -1)
         self.impl = XmllintImpl()
-        
+
     def complete(self, text, word):
         debug("xmllint value complete: text(%s) word(%s)" % (text, word))
         return self.impl.complete(text, word)
@@ -581,7 +585,7 @@ To validate 'xml_buffer' and to indent for human-readability:
 
     def commandline(self, filename, args):
         return self.impl.commandline(filename, args)
-    
+
 class XmllintMemoryCommand(GdbDumpMemoryParent):
     """Check the contents of memory as a full XML document
 
@@ -603,15 +607,15 @@ If 'xml_buffer' is not an array of character, you may need to cast it:
     (gdb) xmllint memory xml_buffer ((char*)xml_buffer)+100
 
 To validate and to indent for human-readability:
-    
+
     (gdb) xmllint value xml_buffer xml_buffer+100 ## --format
 """
     def __init__(self):
         # xmllint value EXPR ## OPTIONS...
-        
+
         GdbDumpMemoryParent.__init__(self, "xmllint memory", -1)
         self.impl = XmllintImpl()
-        
+
     def complete(self, text, word):
         debug("xmllint memory complete: text(%s) word(%s)" % (text, word))
         return self.impl.complete(text, word)
@@ -621,7 +625,7 @@ To validate and to indent for human-readability:
 
     def commandline(self, filename, args):
         return self.impl.commandline(filename, args)
-    
+
 
 set_default_encoding()
 

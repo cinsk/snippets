@@ -125,6 +125,9 @@ one or more string values."""
                              shell=use_shell,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         (out, err) = p.communicate()
+        out = out.decode(locale.getpreferredencoding())
+        err = err.decode(locale.getpreferredencoding())
+
         status = p.wait()
 
         sys.stdout.write(out)
@@ -282,11 +285,9 @@ class IconvEncodings(object):
         try:
             p = subprocess.Popen([ICONV_PATH, "-l"], stdout=subprocess.PIPE)
             outbuf = p.communicate()[0]
-            if sys.version_info[0] <= 2:
-                enclist = outbuf.split("\n")
-            else:
-                enclist = outbuf.decode("utf-8").split("\n")
-                
+            outbuf = outbuf.decode(locale.getpreferredencoding())
+            enclist = outbuf.split("\n")
+
             for enc in enclist:
                 # 'enc' is something like "ANSI_X3.110-1983//"
                 enc = enc.rstrip("/")
@@ -396,8 +397,12 @@ Currently, capture the only first line, removing iconv pathname"""
 
         target = sys.getdefaultencoding()
 
-        width = max(map(len, encodings))
-
+        try:
+            width = max(map(len, encodings))
+        except ValueError:
+            error("Unrecognized encoding.  Try `help iconv'")
+            return False
+        
         sys.stdout.write("Target encoding is %s:\n" % target)
 
         for enc in encodings:
@@ -407,6 +412,8 @@ Currently, capture the only first line, removing iconv pathname"""
                                  stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
             (out, err) = p.communicate()
+            out = out.decode(locale.getpreferredencoding())
+            err = err.decode(locale.getpreferredencoding())
             status = p.wait()
 
             try:

@@ -1,0 +1,13 @@
+#!/bin/bash
+
+VIMROOT=/usr/share/vim
+
+ROOT=$(/bin/ls -d -r $VIMROOT/vim[0-9]* | head -n 1 2>/dev/null)
+BIN="$ROOT/macros/less.sh"
+
+if [ -x "$BIN" ]; then
+    "$BIN" "$@"
+else
+    less "$@"
+fi
+

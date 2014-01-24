@@ -695,7 +695,11 @@ ign_load(const char *basedir)
       break;
   }
 
-  fchdir(cwdfd);
+  if (fchdir(cwdfd) != 0) {
+    close(cwdfd);
+    return -1;
+  }
+
   close(cwdfd);
   return 0;
 }
@@ -780,7 +784,8 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
       printtid_mode = 0;
   }
 
-  ign_load(ignore_search_dir);
+  if (ign_load(ignore_search_dir) != 0)
+    return -1;
 
 #ifdef _PTHREAD
   {
@@ -878,10 +883,10 @@ xthread_set_name(const char *format, ...)
 const char *
 xthread_get_name(char *buf, size_t sz)
 {
-  int ret;
-
 #ifdef _PTHREAD
 #if defined(__linux__)
+  int ret;
+
   // if buffer size is not enough large to hold the thread name,
   // pthread_getname_np() returns ERANGE.
   assert(sz > 0);
@@ -893,6 +898,8 @@ xthread_get_name(char *buf, size_t sz)
   }
   return buf;
 #elif defined(__APPLE__)
+  int ret;
+
   assert(sz > 0);
   ret = pthread_getname_np(pthread_self(), buf, sz);
   if (ret) {

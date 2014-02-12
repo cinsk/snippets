@@ -1,0 +1,370 @@
+#!/bin/bash
+
+PROGRAM_NAME="sssh"
+VERSION_STRING="0.1"
+
+# If the user does not have $HOME/.scalr/config.ini,
+# DEFAULT_SCALR_CONFIG will be copied to $HOME/.scalr/config.ini, for
+# the convinience.
+DEFAULT_SCALR_CONFIG=${DEFAULT_SCALR_CONFIG:="/usr/local/etc/scalr/config.ini"}
+
+# To connect a server without external IP, you'll need a SSH routing
+# server for the connection.  This routing server should be accessible
+# from the client machine that will run sssh(1), and should be able to
+# connect the target server.  In addition to this, this routing server
+# need nc(1) command in PATH.
+SSH_PROXY_ENDPOINT=${SSH_PROXY_ENDPOINT:="root@www.xxx.yyy.zzz"}
+
+# To connect a server in farm (farm-id = 409), the PEM file (409.pem)
+# should be either in $PEM_DIR/409.pem or $HOME/.ssh/409.pem
+PEM_DIR=/usr/local/etc/sssh/pem
+
+nocache=""
+farmid=""
+nocolor=""
+
+if [ ! -t 1 ]; then
+    export nocolor=1
+fi
+
+function tp() {
+    if [ -n "$nocolor" ]; then
+        return 0;
+    fi
+    if [ -z "$TERM" ]; then
+        return 1;
+    fi
+    tput "$@" 2>/dev/null
+    return $?
+}
+
+function error() {
+    local status
+
+    status="$1"
+    shift
+
+    echo "$PROGRAM_NAME: $@" 1>&2
+    if [ 0 -ne "$status" ]; then
+        exit "$status"
+    fi
+}
+
+function farm-id() {
+    local fid
+    if [ -n "$farmid" ]; then
+        echo "$farmid"
+    else
+        if [ -r $HOME/.sssh/.farmid ]; then
+            read fid < $HOME/.sssh/.farmid
+            echo "$fid"
+        else
+            error 1 "no saved farm id.  Use set-farm command"
+        fi
+    fi
+}
+
+function identity-file() {
+    # Usage: identity-file FID
+    if [ -r $HOME/.ssh/$fid.pem ]; then
+        echo "$HOME/.ssh/$fid.pem"
+    elif [ -r $PEM_DIR/$fid.pem ]; then
+        echo "$PEM_DIR/$fid.pem"
+    else
+        error 1 "You'll need to store PEM file as $HOME/.ssh/$fid.pem"
+    fi
+}
+
+function valid-cache-p() {
+    # Usage: valid-cache-p cache-file expiration_in_seconds
+    local created expiration now
+
+    if [ -n "$nocache" ]; then
+        return 1
+    fi
+
+    created=$(stat -c %Y "$1" 2>/dev/null)
+    now=$(date +%s 2>/dev/null)
+    expiration=${2:-300}        # Default: 300 seconds
+
+    if [ -z "$created" -o -z "$now" ]; then
+        return 1;
+    fi
+
+    if [ "$expiration" -ge $((now - created)) ]; then
+        return 0;
+    fi
+    return 1;
+}
+
+function list-servers() {
+    local fid cache
+
+    fid=$(farm-id)
+    if [ -z "$fid" ]; then
+        exit 1
+    fi
+
+    cache="$HOME/.sssh/.$fid"
+
+    if ! valid-cache-p "$cache"; then
+        scalr list-servers -f "$fid" -c ExternalIP,InternalIP,Name > "$cache"
+    fi
+        
+
+    cat "$cache" | \
+    awk -F '|' \
+        -v "c_bo=$(tp bold)" \
+        -v "c_r=$(tp sgr0)" \
+        -v "c_bl=$(tp setaf 4)" \
+        -v "c_gr=$(tp setaf 2)" \
+        -f <(cat - <<-'EOD'
+BEGIN { id = 0; c_n="" }
+NF == 5 { 
+	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
+	sub(/^ */, "", $3);	sub(/ *$/, "", $3);
+	sub(/^ */, "", $4);	sub(/ *$/, "", $4);
+
+	if ($2 != "ExternalIP") {
+		if ($2 == "None")
+			printf "  [%s%2d%s]  %s%15s%s %s%15s%s  %s\n", \
+				c_bo, id, c_r, c_n, $2, c_n, c_gr, $3, c_r, $4;
+		else
+			printf "  [%s%2d%s]  %s%s%15s%s %s%15s%s  %s\n", \
+				c_bo, id, c_r, c_bo, c_bl, $2, c_r, c_gr, $3, c_r, $4;
+		id += 1
+	}
+}
+EOD
+)
+}
+
+function connect-server() {
+    local given fid pem eip iip cache
+
+    given="$1"
+    fid=$(farm-id)
+    if [ -z "$fid" ]; then
+        exit 1
+    fi
+
+    cache="$HOME/.sssh/.$fid"
+    if ! valid-cache-p "$cache"; then
+        scalr list-servers -f "$fid" -c ExternalIP,InternalIP,Name > "$cache"
+    fi
+
+    cinfo=/tmp/sssh.$$
+    trap "rm -f $cinfo; exit 1" SIGINT SIGHUP SIGTERM
+
+    cat "$cache" | \
+    awk -F '|' -f <(cat - <<-EOD
+BEGIN { id = 0 }
+NF == 5 {
+	#print \$0
+	sub(/^ */, "", \$2);	sub(/ *$/, "", \$2);
+	sub(/^ */, "", \$3);	sub(/ *$/, "", \$3);
+	sub(/^ */, "", \$4);	sub(/ *$/, "", \$4);
+
+	if (\$2 != "ExternalIP") {
+		if (id == $given) {
+			if (\$2 == "None")
+				host=""
+			else
+				host=\$2
+			printf "%s#%s\n", host, \$3
+			exit 0
+		}
+		id += 1
+	}
+}
+EOD
+) > $cinfo
+    eip=$(cat $cinfo | awk -F $'#' '{ print $1 }')
+    iip=$(cat $cinfo | awk -F $'#' '{ print $2 }')
+    rm -f "$cinfo"
+    trap "" SIGINT SIGHUP SIGTERM
+
+    pem=$(identity-file $fid)
+    if [ -z "$pem" ]; then
+        exit 1
+    fi
+
+    if [ -z "$eip" ]; then
+        ssh -i "$pem" -o "ProxyCommand ssh -i $pem $SSH_PROXY_ENDPOINT nc %h %p" root@${iip}
+    else
+        ssh -i "$pem" root@${eip}
+    fi
+}
+
+function list-farms() {
+    scalr list-farms | \
+    awk -F '|' \
+        -v "c_bo=$(tp bold)" \
+        -v "c_r=$(tp sgr0)" \
+        -v "c_bl=$(tp setaf 4)" \
+        -v "c_gr=$(tp setaf 2)" \
+        -f <(cat - <<-'EOD'
+NF == 6 { 
+	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
+	sub(/^ */, "", $3);	sub(/ *$/, "", $3);
+	sub(/^ */, "", $4);	sub(/ *$/, "", $4);
+	sub(/^ */, "", $5);	sub(/ *$/, "", $5);
+
+	if ($5 == "Running") {
+		printf "  [%s%3d%s]  %s%s%32s%s (%s%s%s%s):%*s%s\n", \
+			c_bo, $2, c_r, c_bo, c_bl, $3, c_r, c_bo, c_gr, $5, c_r, 10 - length($5), " ", $4;
+	}
+	else if ($5 != "Status") {
+		if ($2 == "")
+			printf "   %3s   %32s  %s  %*s%s\n", "", "", "", 10, " ", $4
+		else
+			printf "  [%3d]  %32s (%s):%*s%s\n", $2, $3, $5, 10 - length($5), " ", $4;
+	}
+}
+EOD
+)
+}
+
+
+function set-farm() {
+    if [ "$#" -ne 1 ]; then
+        error 1 "Usage: set-farm FARM-ID"
+    fi
+
+    echo "$1" > $HOME/.sssh/.farmid
+}
+
+
+function list-environments() {
+    scalr list-environments | \
+    awk -F '|' \
+        -v "c_bo=$(tp bold)" \
+        -v "c_r=$(tp sgr0)" \
+        -v "c_bl=$(tp setaf 4)" \
+        -v "c_gr=$(tp setaf 2)" \
+        -f <(cat - <<-'EOD'
+NF == 4 { 
+	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
+	sub(/^ */, "", $3);	sub(/ *$/, "", $3);
+
+	if ($2 != "ID")
+		printf "  [%s%3d%s]  %s%s%s%s\n", c_bo, $2, c_r, c_bo, c_bl, $3, c_r
+}
+EOD
+)
+}
+
+
+function set-environment() {
+    local envid
+    if [ "$#" -ne 1 ]; then
+        error 1 "Usage: set-env ENVIRONMENT-ID"
+    fi
+    envid="$1"
+    if [ ! -f "$HOME/.scalr/config.ini" ]; then
+        error 0 "missing scalr configuration"
+        error 1 "you need to run 'scalr configure'"
+    fi
+
+    sed -i -e "s/^env_id *=.*$/env_id = ${envid}/" "$HOME/.scalr/config.ini"
+}
+
+
+function version-and-exit() {
+    echo "$PROGRAM_NAME version $VERSION_STRING"
+    exit 0
+}
+
+function help-and-exit() {
+    cat <<EOF
+$PROGRAM_NAME: list|connect Scalr-managed server.
+Usage: $PROGRAM_NAME [OPTION...] COMMAND [COMMAND-ARGUMENT...]
+
+Options:
+
+    -f FID   Use FID-th farm instead of saved one.
+
+    -n       Ignore any cached data.
+
+    -h       show help and exit
+    -v       print version string and exit
+
+
+Commands:
+
+    list         List servers
+    connect ID   Connect to the server(ID)
+
+    env          List environments
+    set-env ID   Set current environment to env(ID)
+
+    farms        List farms
+    set-farm ID  Set current farm to the farm(ID)
+
+
+Example:
+
+    First, you may need to list the available environment using 'env' command,
+    then, set the default environment using 'set-env' command.
+
+    Next, you may need to list the available farm using 'farms' command,
+    then, set the default farm using 'set-farm' command.
+
+    Finally, you may need to list the available servers using 'list' command,
+    then, connect to the server using 'connect' command.
+    
+EOF
+    exit 0
+}
+
+declare -A commandmap
+
+commandmap["list"]="list-servers"
+commandmap["farms"]="list-farms"
+commandmap["set-farm"]="set-farm"
+commandmap["env"]="list-environments"
+commandmap["set-env"]="set-environment"
+commandmap["connect"]="connect-server"
+
+while getopts "hvn" opt "$@"; do
+    case "$opt" in
+        n)
+            nocache=1
+            ;;
+        h)
+            help-and-exit
+            ;;
+        v)
+            version-and-exit
+            ;;
+
+        f)
+            farmid=$OPTARG
+            ;;
+    esac
+done
+shift $(($OPTIND - 1))
+
+if [ "$#" -lt 1 ]; then
+    error 1 "Try \`-h' for help"
+fi
+
+command="$1"
+shift
+
+if [ -z "${commandmap[$command]}" ]; then
+    error 1 "Try '$PROGRAM_NAME help' for list of commands"
+fi
+#echo "cmd: ${commandmap[$command]}"
+
+mkdir -p $HOME/.sssh
+if [ ! -r "$HOME/.scalr/config.ini" ]; then
+    if [ -r "$DEFAULT_SCALR_CONFIG" ]; then
+        mkdir $HOME/.scalr
+        cp "$DEFAULT_SCALR_CONFIG" $HOME/.scalr/
+    else
+        error 1 "You need to configure scalr(1) first"
+    fi
+fi
+
+"${commandmap[$command]}" "$@"

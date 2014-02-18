@@ -173,7 +173,10 @@ parse_qstring(char **parsed, size_t *len, const char *source)
                 (*src >= 'A' && *src <= 'F') ||
                 (*src >= 'a' && *src <= 'f'))) {
           code <<= 4;           /* code = code * 16 */
-          code += *src - '0';
+          if (*src >= '0' && *src <= '9')
+            code += *src - '0';
+          else
+            code += toupper((unsigned char)*src) - 'A' + 10;
           src++;
           i++;
         }
@@ -249,6 +252,8 @@ parse_qstring(char **parsed, size_t *len, const char *source)
 }
 
 
+#ifdef TEST_QSTR
+
 #include <limits.h>
 
 int
@@ -276,3 +281,4 @@ main(void)
 
   return 0;
 }
+#endif  /* TEST_QSTR */

@@ -135,8 +135,8 @@ parse_qstring(char **parsed, size_t *len, const char *source)
   dst = malloc(strlen(source) + 1);
   dp = dst;
 
-  quote = *source++;
-  src = source;
+  quote = *source;
+  src = (source + 1);
 
   while (*src) {
     if (*src == '\\') {
@@ -254,6 +254,9 @@ parse_qstring(char **parsed, size_t *len, const char *source)
       if (*src == quote) {      /* done! */
         *dp = '\0';
         *parsed = dst;
+        src++;
+        if (len)
+          *len = src - source;
         return QSE_OK;
       }
       else {
@@ -261,9 +264,13 @@ parse_qstring(char **parsed, size_t *len, const char *source)
       }
     }
   }
+  src++;
   ret = QSE_PREMATURE_EOS;
   /* error: premature end of quoted string */
  err:
+  if (len)
+    *len = src - source;
+
   free(dst);
   return ret;
 }
@@ -294,6 +301,7 @@ main(void)
 
   ret = parse_qstring(&parsed, &len, buf);
   printf("ret: %d\n", ret);
+  printf("len: %zu\n", len);
   printf("parsed: %s\n", parsed);
 
   return 0;

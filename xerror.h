@@ -85,6 +85,12 @@ extern void xerror(int status, int code, const char *format, ...)
 #define xdebug(code, fmt, ...)                                          \
     xdebug_((code), ("%s:%d: " fmt), __FILE__, __LINE__, ## __VA_ARGS__)
 
+extern void abort(void);
+#define xabort(code, fmt, ...)  do {            \
+    xdebug(code, fmt, ## __VA_ARGS__);          \
+    abort();                                    \
+  } while (0)
+
 /*
  * Return nonzero if 'debug_mode' is nonzero.
  */

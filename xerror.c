@@ -375,12 +375,13 @@ xmessage(int progname, int code, int ignore, int show_tid,
 
   if (code) {
 #if defined(_GNU_SOURCE) && !defined(__APPLE__)
-    fprintf(xerror_stream, ": %s", strerror_r(code, errbuf, BUFSIZ));
+    fprintf(xerror_stream, ": (errno=%d) %s",
+            code, strerror_r(code, errbuf, BUFSIZ));
 #else
     /* We'll use XSI-compliant strerror_r() */
     errno = 0;
     if (strerror_r(code, errbuf, BUFSIZ) == 0)
-      fprintf(xerror_stream, ": %s", errbuf);
+      fprintf(xerror_stream, ": (errno=%d) %s", code, errbuf);
     else if (errno == ERANGE)
       fprintf(xerror_stream, ": [xerror] invalid error code");
     else

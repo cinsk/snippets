@@ -1,12 +1,17 @@
 #!/bin/bash
 
 PROGRAM_NAME="sssh"
-VERSION_STRING="0.1"
+VERSION_STRING="0.2"
 
 # If the user does not have $HOME/.scalr/config.ini,
 # DEFAULT_SCALR_CONFIG will be copied to $HOME/.scalr/config.ini, for
 # the convinience.
 DEFAULT_SCALR_CONFIG=${DEFAULT_SCALR_CONFIG:="/usr/local/etc/scalr/config.ini"}
+
+# Each farm has a role with a VM named 'router-...' and it will have
+# an external IP.  This VM will act as a ssh proxy server to connect
+# other VM if the other VM does not have an external IP.  To override
+# this, define SSH_PROXY_ENDPOINT as below.
 
 # To connect a server without external IP, you'll need a SSH routing
 # server for the connection.  This routing server should be accessible
@@ -55,8 +60,8 @@ function farm-id() {
     if [ -n "$farmid" ]; then
         echo "$farmid"
     else
-        if [ -r $HOME/.sssh/.farmid ]; then
-            read fid < $HOME/.sssh/.farmid
+        if [ -r $HOME/.sssh/farmid ]; then
+            read fid < $HOME/.sssh/farmid
             echo "$fid"
         else
             error 1 "no saved farm id.  Use set-farm command"
@@ -97,6 +102,34 @@ function valid-cache-p() {
     return 1;
 }
 
+
+function find-router() {
+    local fid cache
+
+    fid=$(farm-id)
+    if [ -z "$fid" ]; then
+        exit 1
+    fi
+
+    scalr list-servers -f "$fid" -c ExternalIP,Name | \
+    awk -F '|' \
+        -f <(cat - <<-'EOD'
+BEGIN { id = 0; c_n="" }
+NF == 4 { 
+	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
+	sub(/^ */, "", $3);	sub(/ *$/, "", $3);
+
+	if ($3 ~ /^router/ && $2 != "None") {
+		print $2
+		exit 0
+	}
+}
+END { exit 1 }
+EOD
+)
+}
+
+
 function list-servers() {
     local fid cache
 
@@ -105,7 +138,7 @@ function list-servers() {
         exit 1
     fi
 
-    cache="$HOME/.sssh/.$fid"
+    cache="$HOME/.sssh/$fid"
 
     if ! valid-cache-p "$cache"; then
         scalr list-servers -f "$fid" -c ExternalIP,InternalIP,Name > "$cache"
@@ -140,7 +173,7 @@ EOD
 }
 
 function connect-server() {
-    local given fid pem eip iip cache
+    local given fid pem eip iip cache proxy
 
     given="$1"
     fid=$(farm-id)
@@ -148,7 +181,7 @@ function connect-server() {
         exit 1
     fi
 
-    cache="$HOME/.sssh/.$fid"
+    cache="$HOME/.sssh/$fid"
     if ! valid-cache-p "$cache"; then
         scalr list-servers -f "$fid" -c ExternalIP,InternalIP,Name > "$cache"
     fi
@@ -186,23 +219,32 @@ EOD
 
     pem=$(identity-file $fid)
     if [ -z "$pem" ]; then
+        error 1 "You don't have the pem file ($pem)"
         exit 1
     fi
 
     if [ -z "$eip" ]; then
-        ssh -i "$pem" -o "ProxyCommand ssh -i $pem $SSH_PROXY_ENDPOINT nc %h %p" root@${iip}
+        if ! read proxy < $HOME/.sssh/router; then
+            proxy=$SSH_PROXY_ENDPOINT
+        fi
+
+        ssh -i "$pem" -o "ProxyCommand ssh -i $pem $proxy nc %h %p" root@${iip}
     else
         ssh -i "$pem" root@${eip}
     fi
 }
 
 function list-farms() {
+    local current
+
+    current=$(cat ~/.sssh/farmid)
     scalr list-farms | \
     awk -F '|' \
         -v "c_bo=$(tp bold)" \
         -v "c_r=$(tp sgr0)" \
         -v "c_bl=$(tp setaf 4)" \
         -v "c_gr=$(tp setaf 2)" \
+        -v "c=$current" \
         -f <(cat - <<-'EOD'
 NF == 6 { 
 	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
@@ -210,15 +252,20 @@ NF == 6 {
 	sub(/^ */, "", $4);	sub(/ *$/, "", $4);
 	sub(/^ */, "", $5);	sub(/ *$/, "", $5);
 
+        if ($2 == c)
+		mark = "*"
+	else
+		mark = " "
+
 	if ($5 == "Running") {
-		printf "  [%s%3d%s]  %s%s%32s%s (%s%s%s%s):%*s%s\n", \
-			c_bo, $2, c_r, c_bo, c_bl, $3, c_r, c_bo, c_gr, $5, c_r, 10 - length($5), " ", $4;
+		printf "  [%s%4d%s]  %s%s%32s%s%s (%s%s%s%s):%*s%s\n", \
+			c_bo, $2, c_r, c_bo, c_bl, $3, c_r, mark, c_bo, c_gr, $5, c_r, 10 - length($5), " ", $4;
 	}
 	else if ($5 != "Status") {
 		if ($2 == "")
 			printf "   %3s   %32s  %s  %*s%s\n", "", "", "", 10, " ", $4
 		else
-			printf "  [%3d]  %32s (%s):%*s%s\n", $2, $3, $5, 10 - length($5), " ", $4;
+			printf "  [%4d]  %32s%s (%s):%*s%s\n", $2, $3, mark, $5, 10 - length($5), " ", $4;
 	}
 }
 EOD
@@ -231,24 +278,33 @@ function set-farm() {
         error 1 "Usage: set-farm FARM-ID"
     fi
 
-    echo "$1" > $HOME/.sssh/.farmid
+    rm -f "$HOME/.sssh/farmid" "$HOME/.sssh/router"
+
+    echo "$1" > $HOME/.sssh/farmid
+
+    echo "router: $(find-router)"
+    echo "root@$(find-router)" > $HOME/.sssh/router
 }
 
 
 function list-environments() {
+    local current
+    current=$(grep ^env_id ~/.scalr/config.ini 2>/dev/null | \
+        grep -o "[0-9][0-9]*$")
     scalr list-environments | \
     awk -F '|' \
         -v "c_bo=$(tp bold)" \
         -v "c_r=$(tp sgr0)" \
         -v "c_bl=$(tp setaf 4)" \
         -v "c_gr=$(tp setaf 2)" \
+        -v "c=$current" \
         -f <(cat - <<-'EOD'
 NF == 4 { 
 	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
 	sub(/^ */, "", $3);	sub(/ *$/, "", $3);
 
 	if ($2 != "ID")
-		printf "  [%s%3d%s]  %s%s%s%s\n", c_bo, $2, c_r, c_bo, c_bl, $3, c_r
+		printf "  [%s%3d%s]  %s%s%s%s %s\n", c_bo, $2, c_r, c_bo, c_bl, $3, c_r, (c == $2) ? "*" : ""
 }
 EOD
 )
@@ -325,6 +381,7 @@ commandmap["set-farm"]="set-farm"
 commandmap["env"]="list-environments"
 commandmap["set-env"]="set-environment"
 commandmap["connect"]="connect-server"
+commandmap["help"]="help-and-exit"
 
 while getopts "hvn" opt "$@"; do
     case "$opt" in

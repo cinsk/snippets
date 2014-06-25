@@ -18,6 +18,12 @@ BEGIN_C_DECLS
 
 struct xobs;
 
+char *key_to_hexstring(const void *key, size_t size);
+int hexstring_to_key(void *dst, const char *hexs);
+
+int aes_encrypt(struct xobs *pool, const void *src, size_t srcsz, const void *key, size_t keysz);
+int aes_decrypt(struct xobs *pool, const void *src, size_t srcsz, const void *key, size_t keysz);
+
 int evp_seal_full(struct xobs *pool, EVP_PKEY *key, const void *src, size_t size);
 int evp_unseal_full(struct xobs *pool, EVP_PKEY *key, const void *src, size_t size);
 

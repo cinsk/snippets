@@ -198,7 +198,10 @@ function connect-server() {
     given="$1"
     fid=$(farm-id)
     if [ -z "$fid" ]; then
-        exit 1
+        error 1 "no farm is selected, you may forget to run set-farm command"
+    fi
+    if [ -z "$given" ]; then
+        error 1 "argument(ID) required"
     fi
     shift
 

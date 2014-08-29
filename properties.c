@@ -39,12 +39,18 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include <fnmatch.h>
+
 #ifdef HAVE_UNISTRING
 #include <unistr.h>
 #endif
 
 #include "xerror.h"
+#ifdef USE_XOBS
 #include "xobstack.h"
+#else
+struct xobs {};
+#endif
 #include "uthash.h"
 
 #include "properties.h"
@@ -98,7 +104,13 @@ struct lexer {
   char escseq[5];
   char mb[MB_LEN_MAX];
 
+#ifdef USE_XOBS
   struct xobs *pool;
+#else
+  char *token;
+  size_t token_size;
+  int token_idx;
+#endif
 };
 
 
@@ -109,7 +121,9 @@ struct properties {
 
   const char *filename;
 
+#ifdef USE_XOBS
   struct xobs pool_;
+#endif
 };
 
 
@@ -119,6 +133,10 @@ enum {
   TK_SEP = 1,
   TK_NAME,
 };
+
+static __inline__ void properties_put_(PROPERTIES *props,
+                                       const char *key, const char *value,
+                                       int copy);
 
 struct ifs *ifs_open(const char *filename);
 void ifs_close(struct ifs *p);
@@ -133,6 +151,48 @@ static void free_lexer(struct lexer *lex);
 static char *token_string(struct lexer *lex);
 static int get_token(struct lexer *lex);
 
+
+#ifndef USE_XOBS
+static __inline__ void
+token_clear(struct lexer *lex)
+{
+  free(lex->token);
+  lex->token_idx = 0;
+}
+
+
+static __inline__ char *
+token_finish(struct lexer *lex)
+{
+  char *p;
+
+  p = malloc(lex->token_idx + 1);
+  memcpy(p, lex->token, lex->token_idx);
+  p[lex->token_idx] = '\0';
+
+  lex->token_idx = 0;
+  return p;
+}
+
+static __inline__ int
+token_grow(struct lexer *lex, int c)
+{
+  size_t newsize;
+  char *p;
+
+  if (lex->token_idx >= lex->token_size) {
+    newsize = lex->token_size + 4096;
+    p = realloc(lex->token, newsize);
+    if (!p)
+      return 0;
+    lex->token = p;
+    lex->token_size = newsize;
+  }
+
+  lex->token[lex->token_idx++] = (unsigned char)c;
+  return 1;
+}
+#endif  /* USE_XOBS */
 
 struct ifs *
 ifs_open(const char *filename)
@@ -309,11 +369,16 @@ static int
 init_lexer(struct xobs *pool, struct lexer *lex, const char *filename)
 {
   lex->is = ifs_open(filename);
+#ifdef USE_XOBS
   lex->pool = pool;
-
   lex->filename = xobs_copy0(lex->pool, filename, strlen(filename));
+#else
+  lex->filename = strdup(filename);
+  lex->token = 0;
+  lex->token_size = 0;
+  lex->token_idx = 0;
+#endif
   lex->lineno = 1;
-
   return 0;
 }
 
@@ -321,8 +386,13 @@ init_lexer(struct xobs *pool, struct lexer *lex, const char *filename)
 static void
 free_lexer(struct lexer *lex)
 {
-  if (lex)
-    ifs_close(lex->is);
+  if (!lex)
+    return;
+#ifndef USE_XOBS
+  token_clear(lex);
+  free(lex->filename);
+#endif
+  ifs_close(lex->is);
   //xobs_free(lex->pool, NULL);
 }
 
@@ -330,10 +400,15 @@ free_lexer(struct lexer *lex)
 char *
 token_string(struct lexer *lex)
 {
-  char *p, *end, *q;
+  char *p, *end, *q, *r;
 
+#ifdef USE_XOBS
   p = xobs_base(lex->pool);
   end = p + xobs_object_size(lex->pool);
+#else
+  p = lex->token;
+  end = lex->token + lex->token_idx;
+#endif
 
   for (q = end - 1; q >= p; q--) {
     if (isspace(*q))
@@ -342,7 +417,13 @@ token_string(struct lexer *lex)
       break;
   }
 
-  return xobs_finish(lex->pool);
+#ifdef USE_XOBS
+  r = xobs_finish(lex->pool);
+#else
+  r = token_finish(lex);
+#endif
+
+  return r;
 }
 
 
@@ -374,7 +455,7 @@ parse(PROPERTIES *props)
 
     printf("[%s] = [%s]\n", key, value);
 
-    properties_put(props, key, value);
+    properties_put_(props, key, value, 0);
   }
   return 0;
 }
@@ -452,8 +533,13 @@ get_token(struct lexer *lex)
 #ifdef HAVE_UNISTRING
             len = u8_uctomb((uint8_t *)lex->mb, uc, MB_LEN_MAX);
             if (len >= 0) {
-              for (i = 0; i < len; i++)
+              for (i = 0; i < len; i++) {
+#ifdef USE_XOBS
                 xobs_1grow(lex->pool, lex->mb[i]);
+#else
+                token_grow(lex, lex->mb[i]);
+#endif
+              }
             }
             else {
               /* TODO: len == -1 illegal unicode escape sequence */
@@ -461,7 +547,12 @@ get_token(struct lexer *lex)
 #else
             xerror(0, 0, "%s:%d: unicode escape sequence is not supported",
                    lex->filename, lex->lineno);
+#ifdef USE_XOBS
             xobs_1grow(lex->pool, '?');
+#else
+            token_grow(lex, '?');
+#endif
+
 #endif  /* HAVE_UNISTRING */
           }
           break;
@@ -471,7 +562,11 @@ get_token(struct lexer *lex)
 
         case ':':
         case '=':
+#ifdef USE_XOBS
           xobs_1grow(lex->pool, ch);
+#else
+          token_grow(lex, ch);
+#endif
           break;
 
         default:
@@ -488,19 +583,30 @@ get_token(struct lexer *lex)
            * gettoken() can't handle this. -- cinsk */
 #endif
         case '\n':
+#ifdef USE_XOBS
           xobs_1grow(lex->pool, '\0');
-
+#else
+          token_grow(lex, '\0');
+#endif
           /* NAME part is ready */
           /* TODO: rtrim NAME part */
           ifs_ungetc(lex->is, ch);
           return TK_NAME;
 
         case EOF:
+#ifdef USE_XOBS
           xobs_1grow(lex->pool, '\0');
+#else
+          token_grow(lex, '\0');
+#endif
           return TK_NAME;
 
         default:
+#ifdef USE_XOBS
           xobs_1grow(lex->pool, ch);
+#else
+          token_grow(lex, ch);
+#endif
           break;
         }
       }
@@ -521,7 +627,9 @@ properties_load(const char *pathname, PROPERTIES *reuse)
     p = malloc(sizeof(*p));
     if (!p)
       return NULL;
+#ifdef USE_XOBS
     xobs_init(&p->pool_);
+#endif
 
     p->root = NULL;
     p->filename = NULL;
@@ -531,13 +639,26 @@ properties_load(const char *pathname, PROPERTIES *reuse)
     p = reuse;
 
   if (pathname) {
+#ifdef USE_XOBS
     p->filename = xobs_copy0(&p->pool_, pathname, strlen(pathname));
+#else
+    p->filename = strdup(pathname);
+#endif
 
     if (p->lex)
       free_lexer(p->lex);
 
+#ifdef USE_XOBS
     p->lex = xobs_alloc(&p->pool_, sizeof(*p->lex));
+#else
+    p->lex = malloc(sizeof(*p->lex));
+#endif
+
+#ifdef USE_XOBS
     init_lexer(&p->pool_, p->lex, pathname);
+#else
+    init_lexer(0, p->lex, pathname);
+#endif
 
     parse(p);
   }
@@ -553,29 +674,69 @@ properties_close(PROPERTIES *props)
 
   HASH_ITER(hh, props->root, p, tmp) {
     HASH_DEL(props->root, p);
+#ifndef USE_XOBS
+    free(p->key);
+    free(p->value);
+    free(p);
+#endif
   }
 
   free_lexer(props->lex);
+#ifdef USE_XOBS
   xobs_free(&props->pool_, NULL);
+#else
+  free((void *)props->filename);
+  free(props->lex);
+#endif
+
   free(props);
+}
+
+
+static __inline__ void
+properties_put_(PROPERTIES *props, const char *key, const char *value, int copy)
+{
+  struct property *p;
+
+  HASH_FIND_STR(props->root, key, p);
+  if (p) {
+    HASH_DEL(props->root, p);
+#ifndef USE_XOBS
+    free(p->key);
+    free(p->value);
+    free(p);
+#endif
+  }
+
+#ifdef USE_XOBS
+  p = xobs_alloc(&props->pool_, sizeof(*p));
+  /* TODO: it seems okay to use KEY or VALUE directly, not copying */
+  p->key = xobs_copy0(&props->pool_, key, strlen(key));
+  p->value = xobs_copy0(&props->pool_, value, strlen(value));
+#else
+  p = malloc(sizeof(*p));
+  if (p) {
+    if (copy) {
+      p->key = strdup(key);
+      p->value = strdup(value);
+    }
+    else {
+      p->key = (char *)key;
+      p->value = (char *)value;
+    }
+  }
+#endif
+
+  HASH_ADD_KEYPTR(hh, props->root, p->key, strlen(p->key), p);
 }
 
 
 void
 properties_put(PROPERTIES *props, const char *key, const char *value)
 {
-  struct property *p;
-
-  HASH_FIND_STR(props->root, key, p);
-  if (p)
-    HASH_DEL(props->root, p);
-
-  p = xobs_alloc(&props->pool_, sizeof(*p));
-  p->key = xobs_copy0(&props->pool_, key, strlen(key));
-  p->value = xobs_copy0(&props->pool_, value, strlen(value));
-
-  HASH_ADD_KEYPTR(hh, props->root, p->key, strlen(p->key), p);
+  properties_put_(props, key, value, 1);
 }
+
 
 
 const char *

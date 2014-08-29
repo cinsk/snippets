@@ -1,7 +1,7 @@
 #!/bin/bash
 
 PROGRAM_NAME="sssh"
-VERSION_STRING="0.2"
+VERSION_STRING="0.3"
 
 # If the user does not have $HOME/.scalr/config.ini,
 # DEFAULT_SCALR_CONFIG will be copied to $HOME/.scalr/config.ini, for
@@ -174,12 +174,36 @@ EOD
 
 function connect-server() {
     local given fid pem eip iip cache proxy
+    local OPTIND OPTARG
+    local -a CMD
 
+    CMD+=("ssh")
+    while getopts 1246AaCfgKkMNnqsTtVvXxYyb:c:D:E:e:F:I:i:L:l:m:O:o:p:Q:R:S:W:w: opt; do
+        case $opt in
+            [bcDEeFIiLlmOopQRSWw])
+                #echo "opt($opt) with arg($OPTARG)"
+                CMD+=("-$opt" "$OPTARG")
+                ;;
+            \?)
+                error 1 "invalid option -- $opt"
+                ;;
+            *)
+                #echo "opt($opt)"
+                CMD+=("-$opt")
+                ;;
+        esac
+    done
+
+    shift $((OPTIND - 1))
     given="$1"
     fid=$(farm-id)
     if [ -z "$fid" ]; then
-        exit 1
+        error 1 "no farm is selected, you may forget to run set-farm command"
     fi
+    if [ -z "$given" ]; then
+        error 1 "argument(ID) required"
+    fi
+    shift
 
     cache="$HOME/.sssh/$fid"
     if ! valid-cache-p "$cache"; then
@@ -228,10 +252,13 @@ EOD
             proxy=$SSH_PROXY_ENDPOINT
         fi
 
-        ssh -i "$pem" -o "ProxyCommand ssh -i $pem $proxy nc %h %p" root@${iip}
+        CMD+=(-i "$pem" -o "ProxyCommand ssh -i $pem $proxy nc %h %p" root@${iip} "$@")
     else
-        ssh -i "$pem" root@${eip}
+        CMD+=(-i "$pem" root@${eip} "$@")
     fi
+
+    #echo "cmd: ${CMD[*]}"
+    "${CMD[@]}"
 }
 
 function list-farms() {
@@ -348,14 +375,14 @@ Options:
 
 Commands:
 
-    list         List servers
-    connect ID   Connect to the server(ID)
+    list                                     List servers
+    connect [SSH-OPTIONS...] ID [COMMAND]    Connect to the server(ID)
 
-    env          List environments
-    set-env ID   Set current environment to env(ID)
+    env                                      List environments
+    set-env ID                               Set current environment to env(ID)
 
-    farms        List farms
-    set-farm ID  Set current farm to the farm(ID)
+    farms                                    List farms
+    set-farm ID                              Set current farm to the farm(ID)
 
 
 Example:
@@ -367,7 +394,11 @@ Example:
     then, set the default farm using 'set-farm' command.
 
     Finally, you may need to list the available servers using 'list' command,
-    then, connect to the server using 'connect' command.
+    then, connect to the server using 'connect' command.   'connect' can accept
+    SSH options if needed.  For example, if you want to connect 3rd VM using
+    non-standard port (e.g. 443), you may use 'sssh connect -p 443 3'.  If you just
+    want to run specific command, you may pass additional shell command like
+    'sssh connect ls /'
     
 EOF
     exit 0

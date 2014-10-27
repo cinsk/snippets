@@ -1,27 +1,3 @@
-/*
- * error logging module with backtrace feature
- * Copyright (C) 2014  Seong-Kook Shin <cinsky@gmail.com>
- * DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
- * Version 2, December 2004
- *
- * Copyright (C) 2014 Seong-Kook Shin <cinsky@gmail.com>
- *
- * Everyone is permitted to copy and distribute verbatim or modified
- * copies of this license document, and changing it is allowed as long
- * as the name is changed.
- *
- *            DO WHAT THE FUCK YOU WANT TO PUBLIC LICENSE
- *   TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION AND MODIFICATION
- *
- *  0. You just DO WHAT THE FUCK YOU WANT TO.
- *
- * This program is free software. It comes without any warranty, to the
- * extent permitted by applicable law. You can redistribute it and/or
- * modify it under the terms of the Do What The Fuck You Want To Public
- * License, Version 2, as published by Sam Hocevar. See
- * http://www.wtfpl.net/ for more details.
- */
-
 #define _GNU_SOURCE     1
 #include <assert.h>
 #include <stdarg.h>
@@ -374,8 +350,10 @@ xmessage(int progname, int code, int ignore, int show_tid,
       goto fin;
   }
 
-  if (!xerror_stream)
+  if (!xerror_stream) {
+    UNLOCK();
     return;
+  }
 
   fflush(stdout);
   fflush(xerror_stream);
@@ -399,13 +377,12 @@ xmessage(int progname, int code, int ignore, int show_tid,
 
   if (code) {
 #if defined(_GNU_SOURCE) && !defined(__APPLE__)
-    fprintf(xerror_stream, ": (errno=%d) %s",
-            code, strerror_r(code, errbuf, BUFSIZ));
+    fprintf(xerror_stream, ": %s", strerror_r(code, errbuf, BUFSIZ));
 #else
     /* We'll use XSI-compliant strerror_r() */
     errno = 0;
     if (strerror_r(code, errbuf, BUFSIZ) == 0)
-      fprintf(xerror_stream, ": (errno=%d) %s", code, errbuf);
+      fprintf(xerror_stream, ": %s", errbuf);
     else if (errno == ERANGE)
       fprintf(xerror_stream, ": [xerror] invalid error code");
     else
@@ -589,12 +566,15 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
     sigaction(signo, &sa, NULL);
     raise(signo);
   }
+  close(bt_fd);
 }
 
 
 static void
 bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
 {
+  (void)info;
+  (void)uctx_void;
 #if 0
   static char cmdbuf[LINE_MAX] = { 0, };
   static char cwd[PATH_MAX];
@@ -704,7 +684,7 @@ ign_load(const char *basedir)
   if (env && ign_load_file(env) == 0)
     return 0;
 
-  cwdfd = open(".", O_RDONLY);
+  cwdfd = open(basedir ? basedir : ".", O_RDONLY);
   if (cwdfd == -1)
     return -1;
 
@@ -720,11 +700,7 @@ ign_load(const char *basedir)
       break;
   }
 
-  if (fchdir(cwdfd) != 0) {
-    close(cwdfd);
-    return -1;
-  }
-
+  fchdir(cwdfd);
   close(cwdfd);
   return 0;
 }
@@ -809,8 +785,7 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
       printtid_mode = 0;
   }
 
-  if (ign_load(ignore_search_dir) != 0)
-    return -1;
+  ign_load(ignore_search_dir);
 
 #ifdef _PTHREAD
   {
@@ -908,10 +883,10 @@ xthread_set_name(const char *format, ...)
 const char *
 xthread_get_name(char *buf, size_t sz)
 {
-#ifdef _PTHREAD
-#if defined(__linux__)
   int ret;
 
+#ifdef _PTHREAD
+#if defined(__linux__)
   // if buffer size is not enough large to hold the thread name,
   // pthread_getname_np() returns ERANGE.
   assert(sz > 0);
@@ -923,8 +898,6 @@ xthread_get_name(char *buf, size_t sz)
   }
   return buf;
 #elif defined(__APPLE__)
-  int ret;
-
   assert(sz > 0);
   ret = pthread_getname_np(pthread_self(), buf, sz);
   if (ret) {
@@ -934,9 +907,10 @@ xthread_get_name(char *buf, size_t sz)
   }
   return buf;
 #endif
+#else
+  return "";
 #endif  /* _PTHREAD */
 
-  return "";
 }
 
 

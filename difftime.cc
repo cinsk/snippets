@@ -37,18 +37,19 @@ main(void)
     ::sleep(1);
   }
 
-  long diff;
+  df_t df;
 
-  DIFFTIME_BEGIN {
-    long diff2;
+  DF(df) {
+    df_t df2;
+
     ::sleep(1);
-    DIFFTIME_BEGIN {
+    DF(df2) {
       ::sleep(1);
-    } END_DIFFTIME(diff2);
-    printf("diff2: %lu\n", diff2);
-  } END_DIFFTIME(diff);
+    }
+    printf("diff2: %lu\n", df2.value);
+  }
 
-  printf("diff: %lu\n", diff);
+  printf("diff: %lu\n", df.value);
 
   return 0;
 }

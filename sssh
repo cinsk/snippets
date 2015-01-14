@@ -77,8 +77,9 @@ function identity-file() {
     elif [ -r $PEM_DIR/$fid.pem ]; then
         echo "$PEM_DIR/$fid.pem"
     else
-        error 1 "You'll need to store PEM file as $HOME/.ssh/$fid.pem"
+        return 1
     fi
+    return 0
 }
 
 function valid-cache-p() {
@@ -312,7 +313,7 @@ EOD
         error 1 "You don't have the pem file ($pem)"
         exit 1
     fi
-    bpem=$(identity-file $(cat $HOME/.sssh/bfid 2>/dev/null))
+    bpem=$(identity-file $(cat $HOME/.sssh/bfid 2>/dev/null) 2>/dev/null)
     #echo "bpem: $bpem"
     if [ -z "$eip" -o -n "$bpem" ]; then
         if ! read proxy < $HOME/.sssh/router; then

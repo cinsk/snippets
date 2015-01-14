@@ -374,8 +374,10 @@ xmessage(int progname, int code, int ignore, int show_tid,
       goto fin;
   }
 
-  if (!xerror_stream)
+  if (!xerror_stream) {
+    UNLOCK();
     return;
+  }
 
   fflush(stdout);
   fflush(xerror_stream);
@@ -589,12 +591,15 @@ bt_handler(int signo, siginfo_t *info, void *uctx_void)
     sigaction(signo, &sa, NULL);
     raise(signo);
   }
+  close(bt_fd);
 }
 
 
 static void
 bt_handler_gdb(int signo, siginfo_t *info, void *uctx_void)
 {
+  (void)info;
+  (void)uctx_void;
 #if 0
   static char cmdbuf[LINE_MAX] = { 0, };
   static char cwd[PATH_MAX];
@@ -704,7 +709,7 @@ ign_load(const char *basedir)
   if (env && ign_load_file(env) == 0)
     return 0;
 
-  cwdfd = open(".", O_RDONLY);
+  cwdfd = open(basedir ? basedir : ".", O_RDONLY);
   if (cwdfd == -1)
     return -1;
 
@@ -720,11 +725,7 @@ ign_load(const char *basedir)
       break;
   }
 
-  if (fchdir(cwdfd) != 0) {
-    close(cwdfd);
-    return -1;
-  }
-
+  fchdir(cwdfd);
   close(cwdfd);
   return 0;
 }
@@ -809,8 +810,7 @@ xerror_init(const char *prog_name, const char *ignore_search_dir)
       printtid_mode = 0;
   }
 
-  if (ign_load(ignore_search_dir) != 0)
-    return -1;
+  ign_load(ignore_search_dir);
 
 #ifdef _PTHREAD
   {
@@ -908,10 +908,10 @@ xthread_set_name(const char *format, ...)
 const char *
 xthread_get_name(char *buf, size_t sz)
 {
-#ifdef _PTHREAD
-#if defined(__linux__)
   int ret;
 
+#ifdef _PTHREAD
+#if defined(__linux__)
   // if buffer size is not enough large to hold the thread name,
   // pthread_getname_np() returns ERANGE.
   assert(sz > 0);
@@ -923,8 +923,6 @@ xthread_get_name(char *buf, size_t sz)
   }
   return buf;
 #elif defined(__APPLE__)
-  int ret;
-
   assert(sz > 0);
   ret = pthread_getname_np(pthread_self(), buf, sz);
   if (ret) {
@@ -934,9 +932,10 @@ xthread_get_name(char *buf, size_t sz)
   }
   return buf;
 #endif
+#else
+  return "";
 #endif  /* _PTHREAD */
 
-  return "";
 }
 
 

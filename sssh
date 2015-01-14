@@ -313,7 +313,7 @@ EOD
         exit 1
     fi
     bpem=$(identity-file $(cat $HOME/.sssh/bfid 2>/dev/null))
-    echo "bpem: $bpem"
+    #echo "bpem: $bpem"
     if [ -z "$eip" -o -n "$bpem" ]; then
         if ! read proxy < $HOME/.sssh/router; then
             proxy=$SSH_PROXY_ENDPOINT
@@ -328,7 +328,7 @@ EOD
         CMD+=(-i "$pem" root@${eip} "$@")
     fi
 
-    echo "cmd: ${CMD[*]}"
+    #echo "cmd: ${CMD[*]}"
     "${CMD[@]}"
 }
 

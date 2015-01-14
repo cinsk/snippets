@@ -71,6 +71,7 @@ function farm-id() {
 
 function identity-file() {
     # Usage: identity-file FID
+    local fid=$1
     if [ -r $HOME/.ssh/$fid.pem ]; then
         echo "$HOME/.ssh/$fid.pem"
     elif [ -r $PEM_DIR/$fid.pem ]; then
@@ -103,14 +104,75 @@ function valid-cache-p() {
 }
 
 
+function find-bastion-server() {
+    local bfid=$(find-bastion-farm)
+
+    if [ -z "$bfid" ]; then
+        return 1
+    fi
+
+    scalr list-servers -f "$bfid" -c ExternalIP,Status | \
+        awk -F '|' \
+            -f <(cat - <<-'EOD'
+NF == 4 {
+	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
+	sub(/^ */, "", $3);	sub(/ *$/, "", $3);
+
+	if ($3 == "Running") {
+		print $2
+		exit 0
+	}
+}
+END {
+	exit 1
+}
+EOD
+                )
+    
+}
+
+function find-bastion-farm() {
+    local current
+
+    rm -f $HOME/.sssh/bfid
+    
+    scalr list-farms | \
+        awk -F '|' \
+            -v "bfid=$HOME/.sssh/bfid" \
+            -f <(cat - <<-'EOD'
+NF == 6 { 
+	sub(/^ */, "", $2);	sub(/ *$/, "", $2);
+	sub(/^ */, "", $3);	sub(/ *$/, "", $3);
+	sub(/^ */, "", $4);	sub(/ *$/, "", $4);
+	sub(/^ */, "", $5);	sub(/ *$/, "", $5);
+
+	if ($3 ~ /bastion$/) {
+		print $2
+		print $2 >bfid
+		exit 0
+	}
+}
+END {
+	exit 1
+}
+EOD
+)
+}
+
 function find-router() {
-    local fid cache
+    local fid cache bastion
 
     fid=$(farm-id)
     if [ -z "$fid" ]; then
         exit 1
     fi
 
+    bastion=$(find-bastion-server)
+    if [ -n "$bastion" ]; then
+        echo "$bastion"
+        return 0
+    fi
+    
     scalr list-servers -f "$fid" -c ExternalIP,Name | \
     awk -F '|' \
         -f <(cat - <<-'EOD'
@@ -173,16 +235,20 @@ EOD
 }
 
 function connect-server() {
-    local given fid pem eip iip cache proxy
+    local given fid pem eip iip cache proxy proxyport
     local OPTIND OPTARG
     local -a CMD
 
     CMD+=("ssh")
-    while getopts 1246AaCfgKkMNnqsTtVvXxYyb:c:D:E:e:F:I:i:L:l:m:O:o:p:Q:R:S:W:w: opt; do
+    proxyport=22
+    while getopts 1246AaCfgKkMNnqsTtVvXxYyb:c:D:E:e:F:I:i:L:l:m:O:o:p:P:Q:R:S:W:w: opt; do
         case $opt in
             [bcDEeFIiLlmOopQRSWw])
                 #echo "opt($opt) with arg($OPTARG)"
                 CMD+=("-$opt" "$OPTARG")
+                ;;
+            P)
+                proxyport="$OPTARG"
                 ;;
             \?)
                 error 1 "invalid option -- $opt"
@@ -246,18 +312,23 @@ EOD
         error 1 "You don't have the pem file ($pem)"
         exit 1
     fi
-
-    if [ -z "$eip" ]; then
+    bpem=$(identity-file $(cat $HOME/.sssh/bfid 2>/dev/null))
+    echo "bpem: $bpem"
+    if [ -z "$eip" -o -n "$bpem" ]; then
         if ! read proxy < $HOME/.sssh/router; then
             proxy=$SSH_PROXY_ENDPOINT
         fi
 
-        CMD+=(-i "$pem" -o "ProxyCommand ssh -i $pem $proxy nc %h %p" root@${iip} "$@")
+        if [ -z "$bpem" ]; then
+            bpem="$pem"
+        fi
+           
+        CMD+=(-i "$pem" -o "ProxyCommand ssh -p $proxyport -i $bpem $proxy nc %h %p" root@${iip} "$@")
     else
         CMD+=(-i "$pem" root@${eip} "$@")
     fi
 
-    #echo "cmd: ${CMD[*]}"
+    echo "cmd: ${CMD[*]}"
     "${CMD[@]}"
 }
 
@@ -305,7 +376,7 @@ function set-farm() {
         error 1 "Usage: set-farm FARM-ID"
     fi
 
-    rm -f "$HOME/.sssh/farmid" "$HOME/.sssh/router"
+    rm -f "$HOME/.sssh/farmid" "$HOME/.sssh/router" "$HOME/.sssh/bfid"
 
     echo "$1" > $HOME/.sssh/farmid
 
@@ -396,9 +467,12 @@ Example:
     Finally, you may need to list the available servers using 'list' command,
     then, connect to the server using 'connect' command.   'connect' can accept
     SSH options if needed.  For example, if you want to connect 3rd VM using
-    non-standard port (e.g. 443), you may use 'sssh connect -p 443 3'.  If you just
-    want to run specific command, you may pass additional shell command like
-    'sssh connect ls /'
+    non-standard port (e.g. 443), you may use 'sssh connect -p 443 3'.  If you
+    just want to run specific command, you may pass additional shell command 
+    like 'sssh connect ls /'
+
+    You may use '-P' for one of SSH-OPTIONs, indicates the port number in
+    the ProxyCommand used for the tunneling.
     
 EOF
     exit 0

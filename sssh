@@ -98,6 +98,10 @@ function valid-cache-p() {
         return 1;
     fi
 
+    if [ $(stat -c %s "$1") -eq 0 ]; then
+    	return 1;
+    fi
+
     if [ "$expiration" -ge $((now - created)) ]; then
         return 0;
     fi
@@ -305,6 +309,7 @@ EOD
 ) > $cinfo
     eip=$(cat $cinfo | awk -F $'#' '{ print $1 }')
     iip=$(cat $cinfo | awk -F $'#' '{ print $2 }')
+
     rm -f "$cinfo"
     trap "" SIGINT SIGHUP SIGTERM
 

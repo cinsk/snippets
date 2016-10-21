@@ -1,0 +1,277 @@
+#!/bin/bash
+
+CONV_JSON=/tmp/convjson.$$
+SRC1=/tmp/diffjson.1.$$.json
+SRC2=/tmp/diffjson.2.$$.json
+SRC3=/tmp/diffjson.3.$$.json
+
+PROGRAM_NAME=$(basename $0)
+VERSION_STRING="0.1"
+PYTHON=
+
+cleanup() {
+    rm -f "$CONV_JSON" "$SRC1" "$SRC2" "$SRC3"
+}
+
+trap "cleanup; exit 1" INT HUP TERM QUIT
+
+debug() {
+    [ "$option_debug" ] && echo "${RED}debug: $*${CLR}" 1>&2
+}
+
+error() {
+    local ecode
+    ecode=$1
+    shift
+    echo "$PROGRAM_NAME: $*" 1>&2
+    [ "$ecode" -ne 0 ] && exit "$ecode"
+    return 0
+}
+
+mk_convjson() {
+    sed '1,/^__END__/d' "$0" >$CONV_JSON
+    chmod +x "$CONV_JSON"
+}
+
+check_python2() {
+    local py="$PYTHON"
+
+    if [ -x "$py" ]; then
+        if "$py" --version 2>&1 | grep ' 2\.[67]' >/dev/null; then
+            echo "$py"
+            return 0
+        fi
+    fi
+    
+    py="$(which python 2>/dev/null)"
+    if [ -x "$py" ]; then
+        if "$py" --version 2>&1 | grep ' 2\.[67]' >/dev/null; then
+            echo "$py"
+            return 0
+        fi
+    fi
+    py="$(which python2.7 2>/dev/null)"
+    if [ -x "$py" ]; then
+        if "$py" --version 2>&1 | grep ' 2\.[67]' >/dev/null; then
+            echo "$py"
+            return 0
+        fi
+    fi
+    py="$(which python2.6 2>/dev/null)"
+    if [ -x "$py" ]; then
+        if "$py" --version 2>&1 | grep ' 2\.[67]' >/dev/null; then
+            echo "$py"
+            return 0
+        fi
+    fi
+    error 1 "python 2.x not found"
+}
+
+help_and_exit() {
+    cat <<EOF
+Usage: $PROGRAM_NAME [OPTION...] FILE1 FILE2
+Usage: $PROGRAM_NAME [OPTION...] FILE1 FILE2 -- [DIFF-OPTION...]
+Usage: $PROGRAM_NAME [OPTION...] FILE1 FILE2 FILE3 -- [DIFF-OPTION...]
+Compare two JSON files for difference
+
+    -d PROGRAM   set the program for the diff.
+                 By default, $PROGRAM_NAME tries to use colordiff.  If not, diff(1) will be used.
+                 if PROGRAM is 'emacs', then emacsclient with ediff will be launched.
+
+    -h           show help message and exit
+    -v           display version string and exit
+
+    -D           show debug information
+
+Any remaining argument in DIFF-OPTION position is passed to the diff program as options.
+If there is no DIFF-OPTION, then $PROGRAM_NAME will insert these options:
+
+    diff         -w -c
+    colordiff    -w -c
+    vimdiff      --cmd 'set diffopt+=iwhite' --cmd 'set diffopt+=iwhite'
+
+Copyright (C) 2016 Seong-Kook Shin  <kookie at amazon.com>
+License WTFPLv2:  Do What The Fuck You Want To Public License <http://www.wtfpl.net/>.
+
+EOF
+    exit 0
+}
+
+
+PYTHON=$(check_python2)
+mk_convjson
+
+option_diff_program=$(which diff 2>/dev/null)
+
+while getopts "hvDd:" opt; do
+    case "$opt" in
+        v)
+            echo "$PROGRAM_NAME version $VERSION_STRING"
+            exit 0
+            ;;
+        h)
+            help_and_exit
+            ;;
+        d)
+            option_diff_program=$OPTARG
+            ;;
+        D)
+            option_debug=1
+            ;;
+        *)
+            echo "option: $opt"
+            ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+debug "PYTHON=$PYTHON"
+debug "CONV_JSON=$CONV_JSON"
+debug "DIFF=$option_diff_program"
+
+if [ "$#" -lt 2 ]; then
+    error 0 "argument(s) required"
+    error 1 "Try with \`-h' for more"
+fi
+
+"$PYTHON" "$CONV_JSON" "$1" > "$SRC1"
+[ "$?" -ne 0 ] && exit 1
+"$PYTHON" "$CONV_JSON" "$2" > "$SRC2"
+[ "$?" -ne 0 ] && exit 1
+SRC=("$SRC1" "$SRC2")
+shift 2
+
+if [ "$#" -gt 0 ]; then
+    if [ "$1" != '--' ]; then
+        "$PYTHON" "$CONV_JSON" "$1" > "$SRC3"
+        [ "$?" -ne 0 ] && exit 1
+        shift
+        SRC=("${SRC[@]}" "$SRC3")
+    fi
+    shift
+fi
+
+option_diff_options=("$@")
+shift
+if [ "${#option_diff_options[@]}" -eq 0 ]; then
+    case $(basename "$option_diff_program") in
+        diff)
+            option_diff_options=('-w' '-c')
+            ;;
+        colordiff)
+            option_diff_options=('-w' '-c')
+            ;;
+        vimdiff)
+            option_diff_options=('--cmd' 'set diffopt+=iwhite' '--cmd' 'set diffopt+=iwhite')
+            ;;
+        ediff)
+            ;;
+    esac
+fi
+
+if [ "${#SRC[@]}" -eq 3 -a $(basename "$option_diff_program") = "diff" ]; then
+    if which diff3 2>/dev/null; then
+        option_diff_program=$(which diff3)
+        option_diff_options=()
+    fi
+fi
+
+if [ "${#SRC[@]}" -eq 2 -a $(basename "$option_diff_program") = "diff" ]; then
+    if which colordiff 2>/dev/null; then
+        option_diff_program=$(which colordiff)
+    fi
+fi
+
+if [ $(basename "$option_diff_program") = "emacs" ]; then
+    quoted1=${SRC1//\\/\\\\}; quoted1=${quoted1//\"/\\\"}
+    quoted2=${SRC2//\\/\\\\}; quoted2=${quoted2//\"/\\\"}
+    quoted3=${SRC3//\\/\\\\}; quoted3=${quoted3//\"/\\\"}
+
+    if [ "${#SRC[@]}" -eq 2 ]; then
+        debug "emacsclient -a '' --eval \"(ediff3 \"$quoted1\" \"$quoted2\")\""
+        emacsclient -a '' --eval "(ediff \"$quoted1\" \"$quoted2\")"
+        ECODE="$?"
+    else
+        debug "emacsclient -a '' --eval \"(ediff3 \"$quoted1\" \"$quoted2\" \"$quoted3\")\""
+        emacsclient -a '' --eval "(ediff3 \"$quoted1\" \"$quoted2\" \"$quoted3\")"
+        ECODE="$?"
+    fi
+else
+    debug "$option_diff_program ${option_diff_options[*]} ${SRC[*]}"
+    "$option_diff_program" "${option_diff_options[@]}" "${SRC[@]}"
+    ECODE="$?"
+fi
+
+cleanup
+
+exit "$ECODE"
+# ====================================================================
+__END__
+from StringIO import StringIO
+import json
+import sys
+import types
+
+def convert_json(outfd, jsobj, depth, postfix="", prefix=""):
+    #indent = ("[%d]" % depth) + ".." * depth
+    indent = "  " * depth
+    #indent = ""
+    
+    if isinstance(jsobj, types.NoneType):
+        outfd.write(indent)
+        outfd.write("%s\n" % "null")
+    elif isinstance(jsobj, types.BooleanType):
+        outfd.write(indent)
+        outfd.write("%s\n" % str(jsobj).lower())
+    elif isinstance(jsobj, types.LongType):
+        outfd.write(indent)
+        outfd.write("%ld\n" % jsobj)
+    elif isinstance(jsobj, types.IntType):
+        outfd.write(indent)
+        outfd.write("%d\n" % jsobj)
+    elif isinstance(jsobj, types.FloatType):
+        outfd.write(indent)
+        outfd.write("%f\n" % jsobj)
+    elif isinstance(jsobj, types.ListType):
+        outfd.write(indent)
+        outfd.write("[\n");
+        for elm in sorted(jsobj):
+            convert_json(outfd, elm, depth + 1)
+        outfd.write(indent)
+        outfd.write("]\n");
+    elif isinstance(jsobj, types.DictType):
+        outfd.write(indent)
+        outfd.write("{\n");
+        for elm in sorted(jsobj.keys()):
+            # if elm == "timestamp" and depth == 2:
+            #     pass
+            # elif elm == "url" and depth == 4:
+            #     pass
+            # else:
+            #     convert_json(outfd, elm, depth + 1, ":")
+            #     convert_json(outfd, jsobj[elm], depth + 2)
+            convert_json(outfd, elm, depth + 1, ":")
+            convert_json(outfd, jsobj[elm], depth + 2)
+        outfd.write(indent)
+        outfd.write("}\n");
+    elif isinstance(jsobj, types.StringType):
+        outfd.write(indent)
+        outfd.write("\"%s\"%s\n" % (jsobj, postfix))
+    elif isinstance(jsobj, types.UnicodeType):
+        outfd.write(indent)
+        outfd.write("\"%s\"%s\n" % (jsobj.encode("UTF-8"), postfix))
+    else:
+        sys.stderr.write("diffjson: cannot handle %s type\n" % type(jsobj))
+        sys.exit(1)
+        
+for arg in sys.argv[1:]:
+    try:
+        fd = open(arg, "r")
+        j = json.load(fd)
+    except IOError as e:
+        sys.stderr.write("diffjson: %s: %s\n" % (arg, e.strerror))
+        sys.exit(1)
+    except ValueError:
+        sys.stderr.write("diffjson: %s: JSON parse error\n" % arg)
+        sys.exit(1)
+    convert_json(sys.stdout, j, 0)

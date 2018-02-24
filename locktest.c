@@ -23,7 +23,7 @@
 
 /*
  * build:
- *    $ gcc locktest.c -lpthread
+ *    $ gcc -pthread locktest.c -lpthread
  *
  * Usage:
  *    $ ./a.out -c 100 -t 10      # Run for 10 seconds with 100 threads for lock/increase the counter.

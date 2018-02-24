@@ -2,14 +2,8 @@
 Build
 =====
 
-SmartOS:
-
     $ gcc -pthread condwait.c -lm -lpthread
 
-LX, KVM Linux, or AWS Linux:
-
-    $ gcc -pthread -DUSE_MONOTONIC -DCOND_SETCLOCK condwait.c -lm -lpthread
-    
 Chart
 =====
 

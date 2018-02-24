@@ -71,7 +71,7 @@ main(int argc, char *argv[])
 
   error_init();
 
-  while ((opt = getopt(argc, argv, "c:t:l:qh")) != -1) {
+  while ((opt = getopt(argc, argv, "c:t:l:h")) != -1) {
     switch (opt) {
     case 'c':
       num_threads = atoi(optarg);
@@ -87,9 +87,11 @@ main(int argc, char *argv[])
           error(1, 0, "cannot convert to numeric value: %d", optarg);
       }
       break;
+#if 0
     case 'q':
       redirect_stderr_null();
       break;
+#endif  /* 0 */
     case 'h':
       show_help_and_exit();
       break;
@@ -169,6 +171,7 @@ error_init()
 }
 
 
+#if 0
 int
 redirect_stderr_null()
 {
@@ -197,6 +200,7 @@ redirect_stderr_null()
   stderr = fp;
   return 0;
 }
+#endif  /* 0 */
 
 
 void

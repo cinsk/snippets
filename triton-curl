@@ -1,0 +1,59 @@
+#!/bin/bash
+
+PROGRAM_NAME=$(basename "$0")
+
+error() {
+    local exit_code="$1"
+    shift
+    echo "$PROGRAM_NAME: $*" 1>&2
+    [ "$exit_code" -ne 0 ] && exit "$exit_code"
+}
+
+usage_and_exit() {
+    cat <<EOF
+Triton HTTP API client
+Usage: $PROGRAM_NAME PATH [OPTIONS...]
+
+   Using curl(1), this script will send a request to \${SDC_URL}\${PATH}.
+   You may specify any curl(1) options *after* the PATH argument.
+
+   If the environment variable, DEBUG is set, it will print the HTTP status code
+   to the standard error.
+
+   See https://apidocs.joyent.com/cloudapi/ for more about PATH
+
+   Examples:
+     \$ DEBUG=1 triton-curl '/csk/machines' --data-urlencode 'offset=0' --data-urlencode 'limit=1' -G
+
+EOF
+    exit 1
+}
+
+[ -z "$SDC_ACCOUNT" ] && [ -z "$SDC_KEY_ID" ] && [ -z "$SDC_URL" ] && error 1 "missing environments: SDC_ACCOUNT, SDC_KEY_ID or SDC_URL"
+
+now=$(date -u "+%a, %d %h %Y %H:%M:%S GMT")
+signature=$(echo ${now} | tr -d '\n' | openssl dgst -sha256 -sign ~/.ssh/id_rsa | openssl enc -e -a | tr -d '\n')
+
+# error 0 "now: $now"
+# error 0 "signature: $signature"
+
+# -H "Authorization: Signature keyId=\"/$SDC_ACCOUNT/keys/mystra - joyent\",algorithm=\"rsa-sha256\" ${signature}" \
+
+url="$1"
+shift
+
+exec 3>&1
+
+HTTP_STATUS=$(curl -sS \
+                   "-H" "Accept: application/json" \
+                   "-H" "accept-version: ~8" \
+                   "-H" "Date: ${now}" \
+                   "-H" "Authorization: Signature keyId=\"/$SDC_ACCOUNT/keys/$SDC_KEY_ID\",algorithm=\"rsa-sha256\" ${signature}" \
+                   -w "%{http_code}" \
+                   -o >(cat 1>&3) \
+                   --url "${SDC_URL}${url}" \
+                   "$@";)
+EXIT_CODE="$?"
+echo ""
+[ -n "$DEBUG" ] && echo "http-status: $HTTP_STATUS" 1>&2
+exit "$EXIT_CODE"

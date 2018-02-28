@@ -1,0 +1,67 @@
+#!/bin/bash
+
+
+PROGRAM_NAME=$(basename "$0")
+
+error() {
+    local exit_code="$1"
+    shift
+    echo "$PROGRAM_NAME: $*" 1>&2
+    [ "$exit_code" -ne 0 ] && exit "$exit_code"
+}
+
+usage_and_exit() {
+    cat <<EOF
+Manta HTTP API client
+Usage: $PROGRAM_NAME PATH [OPTIONS...]
+
+   Using curl(1), this script will send a request to \${MANTA_URL}\${PATH}.
+   You may specify any curl(1) options *after* the PATH argument.
+
+   If the environment variable, DEBUG is set, it will print the HTTP status code
+   to the standard error.
+
+   See https://apidocs.joyent.com/manta/api.html for more about PATH
+
+EOF
+    exit 1
+}
+
+if [ "$#" -eq 0 ]; then
+    usage_and_exit
+fi
+
+[ -z "$MANTA_USER" ] && [ -z "$MANTA_KERY_ID" ] && [ -z "$MANTA_URL" ] && \
+    error 1 "missing environments: MANTA_USER, MANTA_KEY_ID, or MANTA_URL"
+
+if [[ ! "$MANTA_KEY_ID" =~ ^[a-fA-F0-9][a-fA-F0-9]: ]]; then
+    # https://help.joyent.com/hc/en-us/articles/235815668-InvalidKeyId-error-when-interacting-with-Triton-Object-Storage-Manta-from-shell
+    error 0 "Invalid format in MANTA_KEY_ID"
+    error 1 "Check https://goo.gl/4FGSpZ for details"
+fi
+
+# https://apidocs.joyent.com/manta/api.html
+now=$(date -u "+%a, %d %h %Y %H:%M:%S GMT")
+signature=$(echo "date: ${now}" | tr -d '\n' | \
+                openssl dgst -sha256 -sign ~/.ssh/id_rsa | \
+                openssl enc -e -a | tr -d '\n')
+
+#error 0 "now: $now"
+#error 0 "signature: $signature"
+
+url="$1"
+shift
+
+exec 3>&1
+
+HTTP_STATUS=$(curl -sS \
+                   "-H" "Date: ${now}" \
+                   "-H" "Authorization: Signature keyId=\"/$MANTA_USER/keys/$MANTA_KEY_ID\",algorithm=\"rsa-sha256\",signature=\"${signature}\"" \
+                   -w "%{http_code}" \
+                   -o >(cat 1>&3) \
+                   --url "${MANTA_URL}${url}" \
+                   "$@";)
+EXIT_CODE="$?"
+
+[ -n "$DEBUG" ] && echo "http-status: $HTTP_STATUS" 1>&2
+exit "$EXIT_CODE"
